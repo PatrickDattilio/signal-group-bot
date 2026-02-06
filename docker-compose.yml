@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  signalbot:
+    build: .
+    container_name: signalbot
+    restart: unless-stopped
+    volumes:
+      # Mount config and data directory
+      - ./config.yaml:/data/config.yaml:ro
+      - signalbot-data:/data
+      # Mount signald socket (adjust path as needed)
+      - /var/run/signald/signald.sock:/var/run/signald/signald.sock
+    environment:
+      - SIGNALD_SOCKET=/var/run/signald/signald.sock
+      - SIGNALBOT_LOG_FILE=/data/bot.log
+    # Uncomment to enable verbose logging
+    # command: python main.py -v
+    
+    # Optional: Add logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  signalbot-data:
+    driver: local

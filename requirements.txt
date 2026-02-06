@@ -1,0 +1,8 @@
+PyYAML>=6.0
+Flask>=3.0.0
+
+# Development dependencies (optional)
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+# black>=23.0.0
+# flake8>=6.0.0

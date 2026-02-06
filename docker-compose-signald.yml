@@ -1,0 +1,35 @@
+# Run signald + TCP bridge so the bot on Windows can connect via localhost:7583
+# Usage: docker-compose -f docker-compose-signald.yml up -d
+# Then in config.yaml set: signald.socket_path: "localhost:7583"
+
+version: '3.8'
+
+services:
+  signald:
+    image: signald/signald:latest
+    container_name: signald
+    volumes:
+      - signald-data:/signald
+    restart: unless-stopped
+    command: ["--socket", "/signald/signald.sock"]
+
+  # TCP bridge: exposes the Unix socket on port 7583 so Windows can connect
+  signald-tcp-bridge:
+    image: alpine:latest
+    container_name: signald-tcp-bridge
+    command: >
+      sh -c "apk add --no-cache socat &&
+      echo 'Waiting for signald socket...' &&
+      until [ -S /signald/signald.sock ]; do sleep 2; done &&
+      echo 'Starting TCP bridge on port 7583' &&
+      exec socat TCP-LISTEN:7583,fork,reuseaddr UNIX-CONNECT:/signald/signald.sock"
+    volumes:
+      - signald-data:/signald
+    ports:
+      - "7583:7583"
+    depends_on:
+      - signald
+    restart: unless-stopped
+
+volumes:
+  signald-data:
