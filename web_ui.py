@@ -5,6 +5,7 @@ Run: python web_ui.py   or   python main.py ui
 import json
 import logging
 import os
+import subprocess
 import sys
 from datetime import datetime
 from typing import Optional
@@ -126,9 +127,39 @@ def _get_group_names_for_config(
     return main_name, add_names
 
 
+def _fetch_requesting_via_list_requesting(cfg: dict) -> list[dict]:
+    """Run python main.py list-requesting --json and return the parsed list (no daemon in this process)."""
+    root = os.path.dirname(os.path.abspath(__file__))
+    main_py = os.path.join(root, "main.py")
+    env = os.environ.copy()
+    env["SIGNALBOT_CONFIG"] = CONFIG_PATH
+    try:
+        proc = subprocess.run(
+            [sys.executable, main_py, "list-requesting", "--json"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return []
+    except FileNotFoundError:
+        return []
+    if proc.returncode != 0:
+        raise SignalCliError(proc.stderr.strip() or proc.stdout.strip() or f"exit code {proc.returncode}")
+    out = (proc.stdout or "").strip()
+    if not out:
+        return []
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError as e:
+        raise SignalCliError(f"Invalid list-requesting output: {e}") from e
+
+
 @app.route("/api/requesting", methods=["GET"])
 def api_requesting():
-    """Return list of requesting members with status (messaged_at, status label) and name."""
+    """Return list of requesting members with status (messaged_at, status label) and name. Fetches list via main.py list-requesting --json (no daemon in UI process)."""
     cfg = get_config()
     account = cfg["account"]
     group_id = cfg["group_id"]
@@ -138,12 +169,12 @@ def api_requesting():
     ]
     add_to_group_ids = [gid for gid in add_to_group_ids if gid]
     store = get_store()
-    client = get_client()
     debug = request.args.get("debug", "").lower() in ("1", "true", "yes")
     try:
-        members = client.list_pending_members(account, group_id)
+        members = _fetch_requesting_via_list_requesting(cfg)
     except SignalCliError as e:
         return jsonify({"error": str(e)}), 500
+    client = get_client()
     main_group_name, add_group_names = _get_group_names_for_config(client, group_id, add_to_group_ids)
     names, name_debug = client.get_recipient_names(account, members, return_debug=debug)
     result = []
@@ -170,7 +201,11 @@ def api_requesting():
     }
     if debug and name_debug:
         out["name_lookup_debug"] = name_debug
-    return jsonify(out)
+    resp = jsonify(out)
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 @app.route("/api/send-welcome", methods=["POST"])
@@ -311,8 +346,8 @@ INDEX_HTML = """<!DOCTYPE html>
       if (debugWrap) debugWrap.innerHTML = '';
       tbody.innerHTML = '<tr><td colspan="5">Loading…</td></tr>';
       const debug = new URLSearchParams(window.location.search).get('debug');
-      const url = debug ? '/api/requesting?debug=1' : '/api/requesting';
-      fetch(url)
+      const url = '/api/requesting?_=' + Date.now() + (debug ? '&debug=1' : '');
+      fetch(url, { cache: 'no-store' })
         .then(r => r.ok ? r.json() : Promise.reject(r))
         .then(data => {
           if (data.error) {

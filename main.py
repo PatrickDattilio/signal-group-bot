@@ -154,8 +154,9 @@ def run_web_ui() -> None:
     web_ui.main()
 
 
-def cmd_list_requesting(config: dict) -> None:
+def cmd_list_requesting(config: dict, json_output: bool = False) -> None:
     """Print requesting members (users who requested to join via the group link) for the configured group."""
+    import json as json_mod
     signal_cli_config = config.get("signal_cli", config.get("signald", {}))
     client = SignalCliClient(
         socket_path=signal_cli_config.get("socket_path") or config.get("signal_cli_socket_path") or config.get("signald_socket_path"),
@@ -168,6 +169,10 @@ def cmd_list_requesting(config: dict) -> None:
         if "Group not found" in str(e):
             print("Tip: Run 'python main.py list-groups' to see group IDs, then set group_id in config.yaml.", file=sys.stderr)
         sys.exit(1)
+    if json_output:
+        out = [{"uuid": m.get("uuid", ""), "number": m.get("number", "")} for m in requesting]
+        print(json_mod.dumps(out))
+        return
     if not requesting:
         print("No requesting members.")
         return
@@ -499,7 +504,8 @@ def main() -> None:
     if len(sys.argv) > 1:
         cmd = sys.argv[1]
         if cmd == "list-requesting" or cmd == "list-pending":
-            cmd_list_requesting(config)
+            json_out = "--json" in (sys.argv[2:] if len(sys.argv) > 2 else [])
+            cmd_list_requesting(config, json_output=json_out)
             return
         elif cmd == "mark-requesting-as-messaged":
             cmd_mark_requesting_as_messaged(config, STORE_PATH)

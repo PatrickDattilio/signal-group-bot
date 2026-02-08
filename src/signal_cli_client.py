@@ -198,9 +198,10 @@ class SignalCliClient:
                     return val
         return []
 
-    def get_group(self, account: str, group_id: str) -> dict:
-        """Fetch group state. When cli_config_path is set, use CLI (secondary) to avoid daemon; otherwise use daemon."""
-        if self.cli_config_path:
+    def get_group(self, account: str, group_id: str, use_daemon: bool = False) -> dict:
+        """Fetch group state. When cli_config_path is set and use_daemon is False, use CLI (secondary); otherwise use daemon.
+        Use use_daemon=True when you need full group state (e.g. requestingMembers); CLI listGroups does not include it."""
+        if self.cli_config_path and not use_daemon:
             g = self._get_group_via_cli(account, group_id)
             if g is not None:
                 return g
@@ -232,8 +233,8 @@ class SignalCliClient:
         )
 
     def list_pending_members(self, account: str, group_id: str) -> list[dict]:
-        """Return list of members who requested to join via the group link (requestingMembers)."""
-        group = self.get_group(account, group_id)
+        """Return list of members who requested to join via the group link (requestingMembers). Uses daemon so requestingMembers is present."""
+        group = self.get_group(account, group_id, use_daemon=True)
         requesting = group.get("requestingMembers") or group.get("requesting_members") or []
         result = []
         for addr in requesting:
@@ -279,25 +280,48 @@ class SignalCliClient:
         return result
 
     def _send_message_via_cli(self, account: str, recipient_address: dict, message_body: str) -> dict:
-        """Send a direct message via CLI (secondary client). recipient_address: number or uuid."""
+        """Send a direct message via CLI (secondary client). recipient_address: number or uuid. Uses --message-from-stdin so multiline messages are preserved."""
         number = (recipient_address.get("number") or "").strip()
         uuid_val = (recipient_address.get("uuid") or "").strip()
         recipient = number or uuid_val
         if not recipient:
             raise SignalCliError("send_message: recipient number or uuid required")
-        args = ["send", "-r", recipient, "-m", message_body]
-        proc = self._run_cli(account, args, timeout_sec=30)
+        exe = self.cli_path or shutil.which("signal-cli")
+        if not exe:
+            raise SignalCliError("CLI requires signal-cli on PATH or signal_cli.cli_path in config.")
+        exe = self._resolve_cli_exe(exe)
+        cmd = [exe]
+        if self.cli_config_path:
+            cmd.extend(["-c", self.cli_config_path])
+        cmd.extend(["-a", (account or "").strip()])
+        cmd.extend(["send", recipient, "--message-from-stdin"])
+        use_shell = sys.platform == "win32" and exe and (exe.upper().endswith(".CMD") or exe.upper().endswith(".BAT"))
+        timeout_sec = 30
+        try:
+            if use_shell:
+                cmd_str = subprocess.list2cmdline(cmd)
+                proc = subprocess.run(
+                    cmd_str, shell=True, input=message_body, capture_output=True, text=True,
+                    timeout=timeout_sec, encoding="utf-8", errors="replace",
+                )
+            else:
+                proc = subprocess.run(
+                    cmd, input=message_body, capture_output=True, text=True,
+                    timeout=timeout_sec, encoding="utf-8", errors="replace",
+                )
+        except subprocess.TimeoutExpired:
+            raise SignalCliError("signal-cli send timed out")
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout or "").strip() or f"exit code {proc.returncode}"
             raise SignalCliError(f"signal-cli send failed: {err}")
         return {}
 
     def send_message(self, account: str, recipient_address: dict, message_body: str) -> dict:
-        """Send a direct message. When cli_config_path is set, use CLI (secondary); otherwise daemon. recipient_address: { \"number\": \"+1...\" } or { \"uuid\": \"...\" }."""
-        if self.cli_config_path:
+        """Send a direct message. When cli_config_path is set and recipient has a number, use CLI; else use daemon (daemon handles UUID-only recipients)."""
+        number = (recipient_address.get("number") or "").strip()
+        uuid_val = (recipient_address.get("uuid") or "").strip()
+        if self.cli_config_path and number:
             return self._send_message_via_cli(account, recipient_address, message_body)
-        number = recipient_address.get("number")
-        uuid_val = recipient_address.get("uuid")
         recipient = number or uuid_val or ""
         if not isinstance(recipient, list):
             recipient = [recipient] if recipient else []
