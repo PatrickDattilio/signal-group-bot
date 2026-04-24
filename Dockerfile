@@ -25,14 +25,22 @@ WORKDIR /app
 
 ARG SIGNAL_CLI_VERSION=0.14.3
 
-# Runtime deps: ca-certificates for TLS to Signal servers, curl for healthcheck,
-# tar/bash for signal-cli install + entrypoint, tini for clean PID 1 signal handling.
+# Runtime deps:
+#   ca-certificates - TLS to Signal servers
+#   curl            - healthcheck
+#   tar             - signal-cli tarball extraction
+#   bash            - entrypoint.sh
+#   tini            - PID 1 signal forwarding + zombie reaping
+#   gosu            - drop-privileges helper used by entrypoint.sh to step
+#                     down from root (needed to fix volume perms at start)
+#                     to the non-root app user
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
       tar \
       bash \
       tini \
+      gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Install signal-cli to /opt/signal-cli and symlink into PATH.
@@ -58,8 +66,14 @@ RUN mkdir -p /data \
  && (userdel -r ubuntu  2>/dev/null || true) \
  && (groupdel    ubuntu 2>/dev/null || true) \
  && useradd -m -u 1000 signalbot \
- && chown -R signalbot:signalbot /app /data /opt/signal-cli
-USER signalbot
+ && chown -R signalbot:signalbot /app /opt/signal-cli
+
+# We intentionally start as root so entrypoint.sh can chown the runtime-
+# mounted /data volume (Railway / Compose / k8s all mount it root-owned on
+# first boot, which would otherwise trap the non-root signalbot user on a
+# read-only directory). entrypoint.sh drops privileges via `gosu signalbot`
+# immediately after fixing /data perms, so the long-running JVM + signal-cli
+# daemon never run as root.
 
 ENV SIGNALBOT_CONFIG=/data/config.yaml \
     SIGNALBOT_DB=/data/signalbot.db \

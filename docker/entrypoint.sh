@@ -2,7 +2,11 @@
 # SignalBot container entrypoint.
 #
 # Responsibilities, in order:
-#   1. Make sure /data/signal-cli exists and find the linked account (if any).
+#   0. If started as root (typical on Railway / compose / k8s because the
+#      bind-mounted /data volume is root-owned), chown /data to the
+#      signalbot user and re-exec ourselves via gosu. The JVM + signal-cli
+#      never run as root.
+#   1. Make sure /data/signal-cli exists and find the linked account.
 #   2. Optionally seed /data/messaged.json + /data/metrics.json from base64
 #      env vars, then import them into /data/signalbot.db via migrate-json.
 #   3. Start the signal-cli daemon on the loopback TCP port.
@@ -12,14 +16,29 @@
 
 set -euo pipefail
 
+log() { printf '[entrypoint] %s\n' "$*"; }
+
+# ---------------------------------------------------------------------------
+# 0. Fix volume permissions and drop privileges.
+#    Railway mounts persistent volumes root-owned on every boot; the image
+#    chown in the Dockerfile only covers the build-time /data placeholder,
+#    not the real mount. Do the chown here as root, then re-exec ourselves
+#    as signalbot so the rest of this script (and everything it forks) runs
+#    unprivileged.
+# ---------------------------------------------------------------------------
+if [ "$(id -u)" = "0" ]; then
+  log "running as root; chowning /data to signalbot and dropping privileges"
+  chown -R signalbot:signalbot /data
+  exec gosu signalbot "$0" "$@"
+fi
+
 DB="${SIGNALBOT_DB:-/data/signalbot.db}"
 PORT="${SIGNALBOT_UI_PORT:-${PORT:-5000}}"
 SIGNAL_DATA="${SIGNAL_CLI_DATA:-/data/signal-cli}"
 TCP="${SIGNAL_CLI_TCP:-127.0.0.1:7583}"
 TCP_PORT="${TCP##*:}"
 
-log() { printf '[entrypoint] %s\n' "$*"; }
-
+log "running as $(id -un) (uid=$(id -u))"
 mkdir -p "$SIGNAL_DATA"
 
 # ---------------------------------------------------------------------------
