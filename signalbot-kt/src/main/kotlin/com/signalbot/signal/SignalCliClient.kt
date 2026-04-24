@@ -490,18 +490,73 @@ class SignalCliClient(
     ): NamesResult {
         val debug = if (returnDebug) mutableMapOf<String, Any?>() else null
         val nameById = mutableMapOf<String, String>()
-        val contacts = listContacts()
-        if (debug != null && contacts.isNotEmpty()) {
-            debug["list_contacts_sample_keys"] = contacts.first().keys.toList()
-        }
-        for (c in contacts) {
-            val name = nameFromContact(c) ?: continue
+
+        fun indexContact(c: JsonObject) {
+            val name = nameFromContact(c) ?: return
             val num = c["number"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
             val uid = c["uuid"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-            if (nameIsJustIdentifier(name, uid, num)) continue
+            if (nameIsJustIdentifier(name, uid, num)) return
             if (num.isNotEmpty()) nameById[num] = name
             if (uid.isNotEmpty()) nameById[uid] = name
         }
+
+        // First pass: walk whatever signal-cli already has cached locally.
+        val contacts = listContacts()
+        if (debug != null) {
+            debug["list_contacts_count"] = contacts.size
+            if (contacts.isNotEmpty()) {
+                debug["list_contacts_sample_keys"] = contacts.first().keys.toList()
+            }
+        }
+        contacts.forEach(::indexContact)
+
+        // Second pass: anyone still missing (typical for group-join requesters
+        // who aren't in your contacts yet) - force a server-side profile
+        // refresh by calling listContacts with their UUIDs as the `recipient`
+        // filter. Per signal-cli docs: "When a specific recipient is given,
+        // its profile will be refreshed." Doing it as one batched call cuts
+        // round-trips vs. the old per-member fallback.
+        val missing = members
+            .filter { m ->
+                val hasUuid = m.uuid.isNotBlank() && nameById.containsKey(m.uuid)
+                val hasNum = m.number.isNotBlank() && nameById.containsKey(m.number)
+                !hasUuid && !hasNum
+            }
+            .map { it.uuid.ifBlank { it.number } }
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        if (missing.isNotEmpty()) {
+            if (debug != null) debug["profile_refresh_requested"] = missing
+            val refreshed = try {
+                val result = call("listContacts", buildJsonObject {
+                    put("recipient", JsonArray(missing.map { JsonPrimitive(it) }))
+                }, retries = 0)
+                when (result) {
+                    is JsonArray -> result.mapNotNull { it as? JsonObject }
+                    is JsonObject -> {
+                        (result["contacts"] as? JsonArray)?.mapNotNull { it as? JsonObject }
+                            ?: (result["contactList"] as? JsonArray)?.mapNotNull { it as? JsonObject }
+                            ?: emptyList()
+                    }
+                    else -> emptyList()
+                }
+            } catch (e: SignalCliException) {
+                if (debug != null) debug["profile_refresh_error"] = e.message ?: "unknown"
+                emptyList()
+            } catch (e: SignalCliConnectionException) {
+                if (debug != null) debug["profile_refresh_error"] = "connection: ${e.message}"
+                emptyList()
+            }
+            if (debug != null) {
+                debug["profile_refresh_returned"] = refreshed.size
+                if (refreshed.isNotEmpty()) {
+                    debug["profile_refresh_sample"] = refreshed.first().toString().take(500)
+                }
+            }
+            refreshed.forEach(::indexContact)
+        }
+
         val out = mutableListOf<String?>()
         for (m in members) {
             val name = nameById[m.uuid] ?: nameById[m.number]
@@ -514,7 +569,9 @@ class SignalCliClient(
                 out.add(null)
                 continue
             }
-            val fetched = lookupRecipientName(recipient)
+            // Per-recipient fallback kept for parity, but should rarely run
+            // after the batch refresh above.
+            val fetched = try { lookupRecipientName(recipient) } catch (_: Exception) { null }
             out.add(fetched ?: recipient)
         }
         return NamesResult(out, debug)
