@@ -32,6 +32,7 @@ if [ "$(id -u)" = "0" ]; then
   exec gosu signalbot "$0" "$@"
 fi
 
+CONFIG="${SIGNALBOT_CONFIG:-/data/config.yaml}"
 DB="${SIGNALBOT_DB:-/data/signalbot.db}"
 PORT="${SIGNALBOT_UI_PORT:-${PORT:-5000}}"
 SIGNAL_DATA="${SIGNAL_CLI_DATA:-/data/signal-cli}"
@@ -40,6 +41,23 @@ TCP_PORT="${TCP##*:}"
 
 log "running as $(id -un) (uid=$(id -u))"
 mkdir -p "$SIGNAL_DATA"
+
+# ---------------------------------------------------------------------------
+# Seed /data/config.yaml from the bundled example on first boot. The UI
+# command exits immediately if the config file is missing, which would
+# crash-loop the container before the operator can railway-shell in to
+# write one. The seeded file is the example template with placeholder
+# account + group_id; the UI boots and the operator replaces it in place.
+# ---------------------------------------------------------------------------
+if [ ! -f "$CONFIG" ]; then
+  if [ -f /app/config.example.yaml ]; then
+    log "WARNING: $CONFIG missing; seeding from /app/config.example.yaml"
+    log "         edit it via 'railway shell' and redeploy before production use."
+    cp /app/config.example.yaml "$CONFIG"
+  else
+    log "ERROR: $CONFIG missing and /app/config.example.yaml not in image"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Find the linked signal-cli account, if one has been uploaded.
