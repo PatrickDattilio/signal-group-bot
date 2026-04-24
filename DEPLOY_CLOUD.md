@@ -118,6 +118,25 @@ cd SignalBot
 railway init        # creates a new project linked to this repo
 ```
 
+### Service name — export `$SERVICE` once, reuse everywhere
+
+Railway names the service **`web`** by default when you deploy from a
+GitHub repo. Every `railway run` / `railway shell` / `railway logs` call
+in the rest of this guide targets a service by name, so pick a shell
+variable and use it:
+
+```bash
+# After `railway link` shows the service name (e.g. `web`):
+export SERVICE=web
+```
+
+If you'd rather the name match the project, rename the service in the
+dashboard under service → **Settings** → **Service Name** (your public
+URL and volume survive the rename) and use `export SERVICE=signalbot`.
+
+> Every subsequent `railway ... --service "$SERVICE"` command in this
+> guide assumes `$SERVICE` is set in your shell.
+
 ---
 
 ## 4. Attach a persistent volume
@@ -240,14 +259,14 @@ no base64, no Railway UI paste of 40 KB.
 ```bash
 # From your SignalBot repo root:
 tar -czf - messaged.json metrics.json \
-  | railway run --service signalbot -- sh -c 'cd /data && tar -xzf -'
+  | railway run --service "$SERVICE" -- sh -c 'cd /data && tar -xzf -'
 
 # Run the one-time import (idempotent — safe to rerun):
-railway run --service signalbot -- \
+railway run --service "$SERVICE" -- \
   sh -c 'cd /data && java -jar /app/signalbot.jar migrate-json'
 
 # Verify:
-railway run --service signalbot -- \
+railway run --service "$SERVICE" -- \
   java -jar /app/signalbot.jar stats
 ```
 
@@ -326,7 +345,7 @@ ls                             # should list: signal-cli
 
 # Pipe a tarball through railway run directly into /data
 tar -czf - signal-cli | \
-  railway run --service signalbot -- \
+  railway run --service "$SERVICE" -- \
     sh -c 'cd /data && tar -xzf -'
 ```
 
@@ -338,7 +357,7 @@ tar -czf - signal-cli | base64 -w0 > signal-cli.tgz.b64
 # paste contents into a temporary TARBALL_B64 env var in Railway (delete after)
 
 # then attach to the container:
-railway shell --service signalbot
+railway shell --service "$SERVICE"
 # inside:
 echo "$TARBALL_B64" | base64 -d | tar -xzf - -C /data
 exit
@@ -348,7 +367,7 @@ exit
 ### Verify
 
 ```bash
-railway run --service signalbot -- ls -la /data/signal-cli/data/
+railway run --service "$SERVICE" -- ls -la /data/signal-cli/data/
 # expect a file named +YOURNUMBER and a per-account directory
 ```
 
@@ -360,7 +379,7 @@ Railway gives you a shell on the running container. Use a heredoc to write
 your config directly onto `/data`:
 
 ```bash
-railway shell --service signalbot
+railway shell --service "$SERVICE"
 ```
 
 ```bash
@@ -403,7 +422,7 @@ Push any no-op commit, or use the dashboard: service → **Deployments** →
 **Redeploy**.
 
 ```bash
-railway logs --service signalbot --follow
+railway logs --service "$SERVICE" --follow
 ```
 
 Healthy startup looks like:
@@ -442,7 +461,7 @@ phone that the action took effect.
 If the bot already ran a poll cycle:
 
 ```bash
-railway run --service signalbot -- java -jar /app/signalbot.jar stats
+railway run --service "$SERVICE" -- java -jar /app/signalbot.jar stats
 ```
 
 ---
@@ -464,8 +483,8 @@ railway run --service signalbot -- java -jar /app/signalbot.jar stats
 ### Logs
 
 ```bash
-railway logs --service signalbot           # last page
-railway logs --service signalbot --follow  # tail
+railway logs --service "$SERVICE"           # last page
+railway logs --service "$SERVICE" --follow  # tail
 ```
 
 ### Restart
@@ -474,15 +493,15 @@ Any redeploy (or commit) restarts the whole container. `tini` propagates
 SIGTERM to both signal-cli and the bot, so there's no orphaned daemon.
 
 ```bash
-railway redeploy --service signalbot
+railway redeploy --service "$SERVICE"
 ```
 
 ### Stats + dry runs
 
 ```bash
-railway run --service signalbot -- java -jar /app/signalbot.jar stats
-railway run --service signalbot -- java -jar /app/signalbot.jar list-requesting
-railway run --service signalbot -- java -jar /app/signalbot.jar dry-run --verbose
+railway run --service "$SERVICE" -- java -jar /app/signalbot.jar stats
+railway run --service "$SERVICE" -- java -jar /app/signalbot.jar list-requesting
+railway run --service "$SERVICE" -- java -jar /app/signalbot.jar dry-run --verbose
 ```
 
 ### Volume backups
@@ -490,7 +509,7 @@ railway run --service signalbot -- java -jar /app/signalbot.jar dry-run --verbos
 Railway doesn't auto-snapshot volumes. Once a week:
 
 ```bash
-railway run --service signalbot -- \
+railway run --service "$SERVICE" -- \
   tar -czf - /data/signalbot.db /data/signal-cli \
   > signalbot-backup-$(date +%F).tgz
 ```
@@ -513,7 +532,7 @@ To recover:
 
 1. Re-run step 1 locally against the same `SIGNAL_CLI_DATA` directory (or a
    fresh one).
-2. `railway shell --service signalbot` → `rm -rf /data/signal-cli/*`.
+2. `railway shell --service "$SERVICE"` → `rm -rf /data/signal-cli/*`.
 3. Re-upload per step 7.
 4. Redeploy.
 
@@ -537,8 +556,8 @@ you don't re-DM anyone who was already messaged.
 Verbose logs from the bot itself:
 
 ```bash
-railway variables --service signalbot --set LOG_LEVEL=DEBUG
-railway redeploy  --service signalbot
+railway variables --service "$SERVICE" --set LOG_LEVEL=DEBUG
+railway redeploy  --service "$SERVICE"
 ```
 
 ---
