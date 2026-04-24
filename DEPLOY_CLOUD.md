@@ -137,6 +137,21 @@ URL and volume survive the rename) and use `export SERVICE=signalbot`.
 > Every subsequent `railway ... --service "$SERVICE"` command in this
 > guide assumes `$SERVICE` is set in your shell.
 
+### `railway run` vs `railway ssh` — which to use when
+
+Railway has two superficially-similar commands that behave very
+differently:
+
+| Command | Runs where | Sees the volume? | Use for |
+|---|---|---|---|
+| `railway run -- cmd` | **On your laptop**, with Railway env vars injected | No | Local tooling that needs prod env vars (rare) |
+| `railway ssh -- cmd` | **Inside the deployed container** | **Yes** | Anything that reads/writes `/data`, streams a tar in, runs `migrate-json`, etc. |
+
+Everything below uses `railway ssh`, because every interesting command
+touches `/data`. Don't swap it for `railway run` — you'll get confusing
+`/data: No such file or directory` errors because your laptop doesn't
+have `/data`.
+
 ---
 
 ## 4. Attach a persistent volume
@@ -259,14 +274,14 @@ no base64, no Railway UI paste of 40 KB.
 ```bash
 # From your SignalBot repo root:
 tar -czf - messaged.json metrics.json \
-  | railway run --service "$SERVICE" -- sh -c 'cd /data && tar -xzf -'
+  | railway ssh --service "$SERVICE" -- sh -c 'cd /data && tar -xzf -'
 
 # Run the one-time import (idempotent — safe to rerun):
-railway run --service "$SERVICE" -- \
+railway ssh --service "$SERVICE" -- \
   sh -c 'cd /data && java -jar /app/signalbot.jar migrate-json'
 
 # Verify:
-railway run --service "$SERVICE" -- \
+railway ssh --service "$SERVICE" -- \
   java -jar /app/signalbot.jar stats
 ```
 
@@ -345,7 +360,7 @@ ls                             # should list: signal-cli
 
 # Pipe a tarball through railway run directly into /data
 tar -czf - signal-cli | \
-  railway run --service "$SERVICE" -- \
+  railway ssh --service "$SERVICE" -- \
     sh -c 'cd /data && tar -xzf -'
 ```
 
@@ -367,7 +382,7 @@ exit
 ### Verify
 
 ```bash
-railway run --service "$SERVICE" -- ls -la /data/signal-cli/data/
+railway ssh --service "$SERVICE" -- ls -la /data/signal-cli/data/
 # expect a file named +YOURNUMBER and a per-account directory
 ```
 
@@ -461,7 +476,7 @@ phone that the action took effect.
 If the bot already ran a poll cycle:
 
 ```bash
-railway run --service "$SERVICE" -- java -jar /app/signalbot.jar stats
+railway ssh --service "$SERVICE" -- java -jar /app/signalbot.jar stats
 ```
 
 ---
@@ -499,9 +514,9 @@ railway redeploy --service "$SERVICE"
 ### Stats + dry runs
 
 ```bash
-railway run --service "$SERVICE" -- java -jar /app/signalbot.jar stats
-railway run --service "$SERVICE" -- java -jar /app/signalbot.jar list-requesting
-railway run --service "$SERVICE" -- java -jar /app/signalbot.jar dry-run --verbose
+railway ssh --service "$SERVICE" -- java -jar /app/signalbot.jar stats
+railway ssh --service "$SERVICE" -- java -jar /app/signalbot.jar list-requesting
+railway ssh --service "$SERVICE" -- java -jar /app/signalbot.jar dry-run --verbose
 ```
 
 ### Volume backups
@@ -509,7 +524,7 @@ railway run --service "$SERVICE" -- java -jar /app/signalbot.jar dry-run --verbo
 Railway doesn't auto-snapshot volumes. Once a week:
 
 ```bash
-railway run --service "$SERVICE" -- \
+railway ssh --service "$SERVICE" -- \
   tar -czf - /data/signalbot.db /data/signal-cli \
   > signalbot-backup-$(date +%F).tgz
 ```
