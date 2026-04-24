@@ -32,7 +32,7 @@ If you stop the daemon and want to run the CLI manually:
 In PowerShell, a quoted path is not run as a program by default. Use the **call operator** `&`:
 
 ```powershell
-& "C:\Users\Patrick\scoop\shims\signal-cli.CMD" -a "+13013318644" updateGroup -g "wwL5M+LvsBYiVSSCYZvgxAG4FPwfGNwpEJPHo5Wk9Xg=" -m "24295876-dc2c-4d43-9843-8f5e76904337"
+& "C:\path\to\signal-cli.CMD" -a "+12025551234" updateGroup -g "YOUR_GROUP_ID_BASE64" -m "MEMBER_UUID"
 ```
 
 In **cmd.exe**, you can paste the command from the log as-is (no `&`).

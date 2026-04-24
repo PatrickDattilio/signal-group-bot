@@ -2,6 +2,8 @@
 
 A robust bot that manages join requests for moderated Signal groups. When users request to join via the **public group link** (with "Approve New Members" enabled), the bot sends each requester a customizable message, then you can approve them manually in the Signal app or have the bot approve them automatically.
 
+> **Kotlin port:** A drop-in Kotlin/JVM rewrite of this project lives in [`signalbot-kt/`](signalbot-kt/). It has full feature parity with the Python code (bot loop + web UI + CLI + `signal-cli` client) but stores state in SQLite instead of JSON files. Build a fat JAR with `cd signalbot-kt && ./gradlew shadowJar`; run with `java -jar signalbot-kt/build/libs/signalbot.jar [command]`. To migrate an existing deployment, run `java -jar signalbot.jar migrate-json` once pointing `SIGNALBOT_STORE`/`SIGNALBOT_METRICS` at your existing JSON files and `SIGNALBOT_DB` at the target SQLite path. See [`CUTOVER.md`](CUTOVER.md) for the side-by-side rollout checklist.
+
 ## Features
 
 - ✅ **Automated welcome messages** to pending members
@@ -118,6 +120,16 @@ Quick start:
 docker-compose up -d
 ```
 
+### Cloud Deployment (Hostable Admin Panel)
+
+The Web UI supports authenticated admin login (`/login`) and session-protected API routes.
+
+Use:
+
+- [DEPLOY_CLOUD.md](DEPLOY_CLOUD.md) for managed-host setup (**Railway** first, plus optional Render/Fly notes)
+- `railway.toml`, `Procfile`, and `wsgi.py` for production startup with gunicorn
+- `render.yaml` only if you deploy on Render instead
+
 ### Environment Variables
 
 - **SIGNALBOT_CONFIG** – Config file path (default: `config.yaml`)
@@ -125,6 +137,13 @@ docker-compose up -d
 - **SIGNALBOT_METRICS** – Metrics file path (default: `metrics.json`)
 - **SIGNALBOT_LOG_FILE** – Log to file (optional)
 - **SIGNAL_CLI_SOCKET** – Override signal-cli socket path (or **SIGNALD_SOCKET** as fallback)
+- **FLASK_SECRET_KEY** – Secret key for secure session cookies in Web UI auth
+- **SIGNALBOT_ADMIN_USERNAME** – Admin login username for the Web UI
+- **SIGNALBOT_ADMIN_PASSWORD_HASH** – Password hash for Web UI login (Werkzeug or bcrypt)
+- **SIGNALBOT_COOKIE_SECURE** – Set `1` for HTTPS-only session cookies in production
+- **SIGNALBOT_LOGIN_MAX_ATTEMPTS** – Login attempts before lockout (default: `5`)
+- **SIGNALBOT_LOGIN_WINDOW_SECONDS** – Failed-attempts window seconds (default: `900`)
+- **SIGNALBOT_LOGIN_LOCKOUT_SECONDS** – Lockout seconds after failures (default: `900`)
 
 ## Message Templates
 

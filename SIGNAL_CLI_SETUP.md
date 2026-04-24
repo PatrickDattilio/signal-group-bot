@@ -17,7 +17,7 @@ SignalBot uses **signal-cli** (not signald) to talk to Signal. This guide gets t
 One-time setup:
 
 ```bash
-signal-cli -u +13013318644 link
+signal-cli -u +12025551234 link
 ```
 
 In the Signal app on your phone: **Settings → Linked devices → Link new device**, then scan the QR code (or use the link) shown in the terminal.
@@ -29,7 +29,7 @@ In the Signal app on your phone: **Settings → Linked devices → Link new devi
 **On Windows** (no DBus), use socket mode:
 
 ```powershell
-signal-cli -u +13013318644 daemon --socket
+signal-cli -u +12025551234 daemon --socket
 ```
 
 The daemon listens on a **Unix socket** by default. On Windows you need a **TCP** port so the bot can connect.
@@ -45,7 +45,7 @@ signal-cli daemon --help
 Look for `--tcp` or `--port`. If available:
 
 ```powershell
-signal-cli -u +13013318644 daemon --socket --tcp 7583
+signal-cli -u +12025551234 daemon --socket --tcp 7583
 ```
 
 Then in `config.yaml` set:
@@ -88,7 +88,7 @@ In `config.yaml`:
 signal_cli:
   socket_path: "localhost:7583"   # TCP (Windows) or your TCP host:port
 
-account: "+13013318644"
+account: "+12025551234"
 group_id: "YOUR_GROUP_ID_BASE64"
 # ... rest of config
 ```

@@ -494,7 +494,13 @@ class SignalCliClient:
         cmd.extend(["-a", account, "updateGroup", "-g", group_id])
         for mid in member_ids:
             cmd.extend(["-m", mid])
-        use_shell = sys.platform == "win32" and exe and (exe.upper().endswith(".CMD") or exe.upper().endswith(".BAT"))
+        return self._run_update_group_cli_impl(exe, account, group_id, cmd, use_shell=(sys.platform == "win32" and exe and (exe.upper().endswith(".CMD") or exe.upper().endswith(".BAT"))), log_prefix=log_prefix)
+
+    def _run_update_group_cli_impl(
+        self, exe: str, account: str, group_id: str, cmd: List[str], use_shell: bool = False, log_prefix: str = "updateGroup"
+    ) -> dict:
+        """Execute updateGroup CLI command. cmd must already include -g and -a."""
+        use_shell = use_shell or (sys.platform == "win32" and exe and (exe.upper().endswith(".CMD") or exe.upper().endswith(".BAT")))
         timeout_sec = 30
         try:
             if use_shell:
@@ -519,6 +525,60 @@ class SignalCliClient:
                 "Run: python main.py duplicate-signal-cli-config (with daemon stopped), then set cli_config_path in config.yaml."
             )
         return self._run_update_group_cli(account, group_id, members, log_prefix="approve_membership")
+
+    def deny_membership(self, account: str, group_id: str, members: list[dict]) -> dict:
+        """Deny pending join requests. Uses daemon updateGroup (avoids CLI second-process SQLite conflict on Windows).
+        Tries refuseMembership first if available; otherwise updateGroup with ban. Ban can fail for requesting members
+        with 'multiple membership lists' - in that case we try removeMember to remove from requesting list."""
+        group_id = (group_id or "").strip()
+        if not group_id:
+            raise SignalCliError("group_id is required for deny.")
+        member_addrs = []
+        for m in members:
+            addr = {}
+            u = (m.get("uuid") or "").strip()
+            n = (m.get("number") or "").strip()
+            if u:
+                addr["uuid"] = u
+            if n:
+                addr["number"] = n
+            if addr:
+                member_addrs.append(addr)
+        member_ids = []
+        for m in members:
+            n = (m.get("number") or "").strip()
+            u = (m.get("uuid") or "").strip()
+            mid = n or u
+            if mid and mid != (account or "").strip():
+                member_ids.append(mid)
+        if not member_ids:
+            raise SignalCliError("No member uuid/number for deny.")
+        params = {"groupId": group_id, "ban": member_ids}
+        if account:
+            params["account"] = account
+        for method in ("refuseMembership", "refuse_membership"):
+            try:
+                refuse_params = {"group_id": group_id, "groupId": group_id, "members": member_addrs}
+                if account:
+                    refuse_params["account"] = account
+                self._call(method, refuse_params, retries=0)
+                return {}
+            except SignalCliError:
+                continue
+        try:
+            self._call("updateGroup", params)
+            return {}
+        except SignalCliError as e:
+            if "multiple membership lists" in str(e).lower() or "GroupPatchNotAcceptedException" in str(e):
+                remove_params = {"groupId": group_id, "removeMember": member_ids}
+                if account:
+                    remove_params["account"] = account
+                try:
+                    self._call("updateGroup", remove_params)
+                    return {}
+                except SignalCliError:
+                    pass
+            raise
 
     def add_members_to_group(self, account: str, group_id: str, members: list[dict]) -> dict:
         """Add members to an existing group via signal-cli CLI. One call per member; delay between adds."""
@@ -547,11 +607,12 @@ class SignalCliClient:
                 time.sleep(delay_seconds)
         return {}
 
-    def list_contacts(self) -> list[dict]:
-        """Return list of contacts (for name lookup). Empty list on error or unsupported."""
+    def list_contacts(self, all_recipients: bool = True) -> list[dict]:
+        """Return list of contacts (for name lookup). all_recipients=True includes UUID-only recipients. Empty list on error or unsupported."""
+        params = {"allRecipients": True} if all_recipients else {}
         for method in ("listContacts", "list_contacts"):
             try:
-                result = self._call(method, {}, retries=0)
+                result = self._call(method, params, retries=0)
                 if result is None:
                     continue
                 if isinstance(result, list):
@@ -605,6 +666,35 @@ class SignalCliClient:
                 return full
         return None
 
+    def _is_name_same_as_identifier(self, name: str, uid: str, num: str) -> bool:
+        """Return True if name is just the uuid or number (no real display name)."""
+        if not name or not isinstance(name, str):
+            return False
+        n = name.strip()
+        return n == (uid or "").strip() or n == (num or "").strip()
+
+    def _lookup_recipient_name(self, recipient_id: str) -> Optional[str]:
+        """Fetch profile/name for a single recipient (uuid or number) via listContacts. Returns None on error or if no name found."""
+        if not (recipient_id or "").strip():
+            return None
+        for method in ("listContacts", "list_contacts"):
+            try:
+                result = self._call(method, {"recipient": [recipient_id.strip()]}, retries=0)
+                if result is None:
+                    continue
+                contacts = result if isinstance(result, list) else (result.get("contacts") or result.get("contactList") or [])
+                if not isinstance(contacts, list) or not contacts:
+                    continue
+                for c in contacts:
+                    name = self._name_from_contact(c)
+                    if name and not self._is_name_same_as_identifier(name, recipient_id, recipient_id):
+                        return name
+                    if name and self._is_name_same_as_identifier(name, recipient_id, recipient_id):
+                        continue
+            except SignalCliError:
+                continue
+        return None
+
     def get_recipient_names(
         self, account: str, members: list[dict], return_debug: bool = False
     ) -> Tuple[List[Optional[str]], Optional[dict]]:
@@ -619,6 +709,8 @@ class SignalCliClient:
             if name:
                 num = (c.get("number") or "").strip()
                 uid = (c.get("uuid") or "").strip()
+                if self._is_name_same_as_identifier(name, uid, num):
+                    continue
                 if num:
                     name_by_id[num] = name
                 if uid:
@@ -635,5 +727,9 @@ class SignalCliClient:
             if not recipient:
                 names_out.append(None)
                 continue
-            names_out.append(recipient)
+            fetched = self._lookup_recipient_name(recipient)
+            if fetched:
+                names_out.append(fetched)
+            else:
+                names_out.append(recipient)
         return names_out, debug

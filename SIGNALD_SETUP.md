@@ -13,7 +13,7 @@ This runs signald in Docker and exposes a **TCP port** so your bot on Windows ca
 In PowerShell, from your SignalBot folder:
 
 ```powershell
-cd C:\Users\Patrick\SignalBot
+cd C:\path\to\SignalBot
 docker-compose -f docker-compose-signald.yml up -d
 ```
 
@@ -125,4 +125,4 @@ After your account is linked:
 docker exec signald signaldctl group list +1XXXXXXXXXX
 ```
 
-Use your number in E.164 format (with country code, e.g. +13013318644).
+Use your number in E.164 format (with country code, e.g. +12025551234).

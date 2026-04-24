@@ -50,6 +50,12 @@ messaged.json.tmp
 # Metrics
 metrics.json
 
+# Kotlin port's SQLite DB (don't commit real member data)
+signalbot.db
+signalbot.db-journal
+signalbot.db-wal
+signalbot.db-shm
+
 # Logs
 *.log
 logs/

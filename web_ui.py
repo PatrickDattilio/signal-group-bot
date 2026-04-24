@@ -7,7 +7,9 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime
+from functools import wraps
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -16,12 +18,17 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from flask import Flask, jsonify, request, render_template_string
+    from flask import Flask, jsonify, request, render_template_string, redirect, session, url_for
 except ImportError:
     print("Install Flask: pip install Flask", file=sys.stderr)
     sys.exit(1)
+try:
+    import bcrypt
+except ImportError:
+    bcrypt = None
 
 import yaml
+from werkzeug.security import check_password_hash
 from src.signal_cli_client import SignalCliClient, SignalCliError
 from src.store import Store
 from src.template import MessageTemplate
@@ -31,6 +38,19 @@ app = Flask(__name__)
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.environ.get("SIGNALBOT_CONFIG") or os.path.join(_ROOT, "config.yaml")
 STORE_PATH = os.environ.get("SIGNALBOT_STORE") or os.path.join(_ROOT, "messaged.json")
+_SESSION_COOKIE_SECURE = (os.environ.get("SIGNALBOT_COOKIE_SECURE", "1").strip().lower() not in ("0", "false", "no"))
+app.config.update(
+    SECRET_KEY=os.environ.get("FLASK_SECRET_KEY") or "change-this-in-production",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=_SESSION_COOKIE_SECURE,
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 12,
+)
+_LOGIN_WINDOW_SECONDS = int(os.environ.get("SIGNALBOT_LOGIN_WINDOW_SECONDS", "900"))
+_LOGIN_MAX_ATTEMPTS = int(os.environ.get("SIGNALBOT_LOGIN_MAX_ATTEMPTS", "5"))
+_LOGIN_LOCKOUT_SECONDS = int(os.environ.get("SIGNALBOT_LOGIN_LOCKOUT_SECONDS", "900"))
+_login_attempts: dict[str, list[float]] = {}
+_login_locks: dict[str, float] = {}
 
 # Cached on first use (config is re-read from disk each time so edits take effect without restart)
 _client: Optional[SignalCliClient] = None
@@ -77,7 +97,144 @@ def member_to_address(member: dict) -> dict:
     return addr if addr else {"number": n or "", "uuid": u or ""}
 
 
+def _client_ip() -> str:
+    xff = (request.headers.get("X-Forwarded-For") or "").strip()
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+def _is_authenticated() -> bool:
+    return bool(session.get("is_authenticated"))
+
+
+def _verify_admin_password(raw_password: str, configured_hash: str) -> bool:
+    if not configured_hash:
+        return False
+    hash_text = configured_hash.strip()
+    if hash_text.startswith("$2a$") or hash_text.startswith("$2b$") or hash_text.startswith("$2y$"):
+        if bcrypt is None:
+            logger.error("bcrypt hash configured but bcrypt package is not installed")
+            return False
+        try:
+            return bcrypt.checkpw(raw_password.encode("utf-8"), hash_text.encode("utf-8"))
+        except ValueError:
+            return False
+    try:
+        return check_password_hash(hash_text, raw_password)
+    except ValueError:
+        return False
+
+
+def _is_login_rate_limited(ip: str) -> bool:
+    now = time.time()
+    unlock_at = _login_locks.get(ip, 0.0)
+    if unlock_at > now:
+        return True
+    if unlock_at:
+        _login_locks.pop(ip, None)
+    recent = [t for t in _login_attempts.get(ip, []) if (now - t) <= _LOGIN_WINDOW_SECONDS]
+    _login_attempts[ip] = recent
+    return False
+
+
+def _record_login_failure(ip: str) -> None:
+    now = time.time()
+    recent = [t for t in _login_attempts.get(ip, []) if (now - t) <= _LOGIN_WINDOW_SECONDS]
+    recent.append(now)
+    _login_attempts[ip] = recent
+    if len(recent) >= _LOGIN_MAX_ATTEMPTS:
+        _login_locks[ip] = now + _LOGIN_LOCKOUT_SECONDS
+        _login_attempts[ip] = []
+
+
+def _clear_login_failures(ip: str) -> None:
+    _login_attempts.pop(ip, None)
+    _login_locks.pop(ip, None)
+
+
+def login_required(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        if _is_authenticated():
+            return view_func(*args, **kwargs)
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "authentication required"}), 401
+        return redirect(url_for("login", next=request.path))
+    return wrapped
+
+
+@app.before_request
+def _require_auth_for_admin_routes():
+    if request.endpoint in ("login", "logout", "health", "static"):
+        return None
+    if request.path.startswith("/api/") or request.path == "/":
+        if _is_authenticated():
+            return None
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "authentication required"}), 401
+        return redirect(url_for("login", next=request.path))
+    return None
+
+
+@app.after_request
+def _set_security_headers(resp):
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.path == "/" or request.path.startswith("/api/") or request.path.startswith("/login"):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    return resp
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"ok": True})
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if _is_authenticated():
+        return redirect(url_for("index"))
+    error = None
+    ip = _client_ip()
+    if request.method == "POST":
+        if _is_login_rate_limited(ip):
+            error = "Too many login attempts. Please try again later."
+        else:
+            username = (request.form.get("username") or "").strip()
+            password = request.form.get("password") or ""
+            admin_user = (os.environ.get("SIGNALBOT_ADMIN_USERNAME") or "").strip()
+            admin_pass_hash = (os.environ.get("SIGNALBOT_ADMIN_PASSWORD_HASH") or "").strip()
+            if not admin_user or not admin_pass_hash:
+                error = "Admin credentials are not configured on the server."
+            elif username == admin_user and _verify_admin_password(password, admin_pass_hash):
+                session.clear()
+                session.permanent = True
+                session["is_authenticated"] = True
+                session["admin_username"] = username
+                _clear_login_failures(ip)
+                next_url = request.args.get("next", "/")
+                if not next_url.startswith("/"):
+                    next_url = "/"
+                return redirect(next_url)
+            else:
+                _record_login_failure(ip)
+                error = "Invalid username or password."
+    return render_template_string(LOGIN_HTML, error=error)
+
+
+@app.route("/logout", methods=["GET", "POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.route("/")
+@login_required
 def index():
     return render_template_string(INDEX_HTML)
 
@@ -234,6 +391,28 @@ def api_send_welcome():
     return jsonify({"ok": True, "welcome_sent": True})
 
 
+@app.route("/api/deny", methods=["POST"])
+def api_deny():
+    """Deny member's join request (bans them from the group)."""
+    cfg = get_config()
+    account = cfg["account"]
+    group_id = cfg["group_id"]
+    data = request.get_json() or {}
+    member = data.get("member") or {}
+    uuid_val = member.get("uuid", "")
+    number = member.get("number", "")
+    if not uuid_val and not number:
+        return jsonify({"error": "member.uuid or member.number required"}), 400
+    addr = member_to_address(member)
+    logger.info("Deny: member uuid=%s number=%s -> addr=%s", uuid_val or "(none)", number or "(none)", addr)
+    client = get_client()
+    try:
+        client.deny_membership(account, group_id, [addr])
+    except SignalCliError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True, "denied": True})
+
+
 @app.route("/api/approve", methods=["POST"])
 def api_approve():
     """Approve member (main group) and optionally add to second/third groups (approve_add_to_group_id, approve_add_to_group_id_2). Does not send welcome message."""
@@ -300,6 +479,9 @@ INDEX_HTML = """<!DOCTYPE html>
     .approve-btn { padding: 0.4rem 0.8rem; cursor: pointer; background: #06d6a0; color: #111; border: none; border-radius: 6px; font-weight: 600; }
     .approve-btn:hover { background: #05c090; }
     .approve-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .deny-btn { padding: 0.4rem 0.8rem; cursor: pointer; background: #ef476f; color: #fff; border: none; border-radius: 6px; font-weight: 500; margin-left: 0.2rem; }
+    .deny-btn:hover { background: #d63d62; }
+    .deny-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .actions-cell { white-space: nowrap; }
     .error { color: #ff6b6b; margin-top: 0.5rem; }
     .message { margin-bottom: 1rem; padding: 0.75rem; border-radius: 6px; }
@@ -308,8 +490,11 @@ INDEX_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <h1>Requesting Members</h1>
-  <p class="message info">Send welcome: sends the rules message (approve_rules_message) only. Approve: approves in the main group and optionally adds to additional groups (approve_add_to_group_id, approve_add_to_group_id_2). Names are loaded from Signal when available; add <code>?debug=1</code> to the URL for name lookup debug.</p>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;">
+    <h1 style="margin:0;">Requesting Members</h1>
+    <a href="/logout" style="color:#9bb1ff;">Log out</a>
+  </div>
+  <p class="message info">Send welcome: sends the rules message (approve_rules_message) only. Approve: approves in the main group and optionally adds to additional groups (approve_add_to_group_id, approve_add_to_group_id_2). Deny: denies the join request. Names are loaded from Signal when available; add <code>?debug=1</code> to the URL for name lookup debug.</p>
   <p id="group-names" class="message info" style="display:none;"></p>
   <div class="refresh">
     <button type="button" id="refresh">Refresh list</button>
@@ -401,6 +586,7 @@ INDEX_HTML = """<!DOCTYPE html>
               <td class="actions-cell">
                 <button class="welcome-btn" type="button">Send welcome</button>
                 <button class="approve-btn" type="button">Approve</button>
+                <button class="deny-btn" type="button">Deny</button>
               </td>
             </tr>
           `).join('');
@@ -414,6 +600,14 @@ INDEX_HTML = """<!DOCTYPE html>
             btn.addEventListener('click', function() {
               const row = this.closest('tr');
               postMember('/api/approve', { uuid: row.dataset.uuid, number: row.dataset.number }, this, function() {
+                row.remove();
+              });
+            });
+          });
+          tbody.querySelectorAll('.deny-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+              const row = this.closest('tr');
+              postMember('/api/deny', { uuid: row.dataset.uuid, number: row.dataset.number }, this, function() {
                 row.remove();
               });
             });
@@ -440,6 +634,41 @@ INDEX_HTML = """<!DOCTYPE html>
     document.getElementById('refresh').addEventListener('click', load);
     load();
   </script>
+</body>
+</html>
+"""
+
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SignalBot Admin Login</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; background:#101827; color:#eef2ff; min-height:100vh; margin:0; display:grid; place-items:center; padding:1rem; }
+    .card { width:100%; max-width:420px; background:#1f2937; border-radius:12px; padding:1.25rem; box-shadow:0 8px 30px rgba(0,0,0,.25); }
+    h1 { margin-top:0; font-size:1.2rem; }
+    label { display:block; margin-top:.75rem; margin-bottom:.35rem; color:#c7d2fe; font-size:.95rem; }
+    input { width:100%; padding:.6rem .7rem; border-radius:8px; border:1px solid #374151; background:#111827; color:#eef2ff; }
+    button { width:100%; margin-top:1rem; padding:.65rem .8rem; border:none; border-radius:8px; cursor:pointer; background:#4f46e5; color:white; font-weight:600; }
+    button:hover { background:#4338ca; }
+    .error { margin-top:.75rem; color:#fca5a5; }
+    .hint { margin-top:.75rem; font-size:.85rem; color:#9ca3af; }
+  </style>
+</head>
+<body>
+  <form class="card" method="post" action="/login">
+    <h1>SignalBot Admin</h1>
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Sign in</button>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <div class="hint">Set SIGNALBOT_ADMIN_USERNAME and SIGNALBOT_ADMIN_PASSWORD_HASH in your host environment.</div>
+  </form>
 </body>
 </html>
 """

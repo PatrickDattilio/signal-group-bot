@@ -1,0 +1,11 @@
+# Railway config-as-code: https://docs.railway.app/reference/config-as-code
+# When a Dockerfile is present, Railway builds from it. Our Dockerfile's CMD
+# runs /app/entrypoint.sh under tini, which starts the signal-cli daemon and
+# then the SignalBot UI. We duplicate it here as deploy.startCommand so the
+# same shape applies if Railway ever switches to a Nixpacks build. The health-
+# check timeout is generous because the first signal-cli boot can take ~60s.
+[deploy]
+startCommand = "/usr/bin/tini -- /app/entrypoint.sh"
+healthcheckPath = "/health"
+healthcheckTimeout = 180
+restartPolicyType = "ON_FAILURE"

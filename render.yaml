@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: signalbot-admin
+    env: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: SIGNALBOT_UI_HOST
+        value: 0.0.0.0
+      - key: SIGNALBOT_COOKIE_SECURE
+        value: "1"

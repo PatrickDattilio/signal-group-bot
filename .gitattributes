@@ -1,0 +1,13 @@
+# Keep shell scripts LF-only regardless of client OS, so the Docker image
+# can execute them on Linux without CRLF tripping up the shebang.
+*.sh              text eol=lf
+docker/entrypoint.sh text eol=lf
+docker/*.sh       text eol=lf
+
+# Gradle wrapper script (shipped by Gradle, must stay LF on Linux CI).
+gradlew           text eol=lf
+**/gradlew        text eol=lf
+
+# Explicit LF for files the Dockerfile copies.
+Dockerfile        text eol=lf
+.dockerignore     text eol=lf
