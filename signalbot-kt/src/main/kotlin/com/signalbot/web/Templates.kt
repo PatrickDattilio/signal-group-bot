@@ -125,9 +125,22 @@ object Templates {
               })
               .catch(() => { showError('Request failed'); btn.disabled = false; });
           }
+          function displayName(m) {
+            // Signal lets users join groups without setting a profile name.
+            // When the fetched profile is empty we get the raw UUID back from
+            // the server - render it as "Guest <first 8>" so each anonymous
+            // requester is still visually distinct but the full UUID moves
+            // to the dedicated Number / UUID column.
+            const raw = (m.name || '').trim();
+            const uuid = (m.uuid || '').trim();
+            const isPlaceholder = !raw || raw === uuid || raw === (m.number || '').trim();
+            if (!isPlaceholder) return raw;
+            if (uuid) return 'Guest ' + uuid.slice(0, 8);
+            return '—';
+          }
           tbody.innerHTML = list.map(m => `
             <tr data-uuid="${'$'}{escapeHtml(m.uuid || '')}" data-number="${'$'}{escapeHtml(m.number || '')}">
-              <td>${'$'}{escapeHtml(m.name || '—')}</td>
+              <td>${'$'}{escapeHtml(displayName(m))}</td>
               <td>${'$'}{escapeHtml(m.number || m.uuid || '—')}</td>
               <td><span class="status ${'$'}{m.status}">${'$'}{m.status === 'messaged' ? 'Messaged' : 'Not messaged'}</span></td>
               <td>${'$'}{escapeHtml(m.messaged_at || '—')}</td>
