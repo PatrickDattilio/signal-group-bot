@@ -579,11 +579,12 @@ class SignalCliClient(
             .filter { it.isNotBlank() }
             .distinct()
 
-        fun refreshByRecipients(recipients: List<String>): List<JsonObject> {
+        fun refreshByRecipients(recipients: List<String>, internal: Boolean = false): List<JsonObject> {
             if (recipients.isEmpty()) return emptyList()
             return try {
                 val result = call("listContacts", buildJsonObject {
                     put("recipient", JsonArray(recipients.map { JsonPrimitive(it) }))
+                    if (internal) put("internal", true)
                 }, retries = 0)
                 when (result) {
                     is JsonArray -> result.mapNotNull { it as? JsonObject }
@@ -625,11 +626,16 @@ class SignalCliClient(
                     debug["touch_contact_attempted"] = stillMissing.size
                     debug["touch_contact_succeeded"] = touched
                 }
-                val retried = refreshByRecipients(stillMissing)
+                val retried = refreshByRecipients(stillMissing, internal = debug != null)
                 if (debug != null) {
                     debug["profile_refresh_retry_returned"] = retried.size
                     if (retried.isNotEmpty()) {
-                        debug["profile_refresh_retry_sample"] = retried.first().toString().take(500)
+                        // Keep the first result fully verbose so we can see
+                        // capabilities/unidentified-access-mode - those are the
+                        // fields that reveal whether signal-cli actually
+                        // DECRYPTED the profile (vs. fetched ciphertext with no
+                        // key, which returns a fresh timestamp but all nulls).
+                        debug["profile_refresh_retry_sample"] = retried.first().toString().take(2000)
                     }
                 }
                 retried.forEach(::indexContact)
