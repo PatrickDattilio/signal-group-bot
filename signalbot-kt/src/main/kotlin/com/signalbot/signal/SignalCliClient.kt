@@ -237,6 +237,23 @@ class SignalCliClient(
         )
     }
 
+    /**
+     * Returns the raw `requestingMembers` / `pendingMembers` JSON arrays from
+     * the group object. Useful when you need to inspect fields that aren't
+     * part of [Member] - e.g. to find where signal-cli stashes the profile
+     * name for a stranger who just requested to join.
+     */
+    fun listPendingMembersRaw(account: String, groupId: String): Pair<JsonArray, JsonArray> {
+        val group = getGroup(account, groupId, useDaemon = true)
+        val requesting = (group["requestingMembers"] as? JsonArray)
+            ?: (group["requesting_members"] as? JsonArray)
+            ?: JsonArray(emptyList())
+        val pending = (group["pendingMembers"] as? JsonArray)
+            ?: (group["pending_members"] as? JsonArray)
+            ?: JsonArray(emptyList())
+        return requesting to pending
+    }
+
     fun listPendingMembers(account: String, groupId: String): List<Member> {
         val group = getGroup(account, groupId, useDaemon = true)
         val requesting = (group["requestingMembers"] as? JsonArray)

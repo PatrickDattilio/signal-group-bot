@@ -144,6 +144,19 @@ fun Application.installRoutes(context: WebAppContext) {
                 if (debug && namesResult.debug != null) {
                     put("name_lookup_debug", namesResult.debug.toJson())
                 }
+                if (debug) {
+                    // Dump the raw requestingMembers JSON signal-cli returned
+                    // so we can see exactly which fields are populated (and
+                    // which aren't) for join-request strangers.
+                    try {
+                        val (raw, _) = withContext(Dispatchers.IO) {
+                            client.listPendingMembersRaw(cfg.account, cfg.groupId)
+                        }
+                        put("raw_requesting_members", raw)
+                    } catch (e: SignalCliException) {
+                        put("raw_requesting_members_error", e.message ?: "error")
+                    }
+                }
             }
             call.respond(out)
         }
