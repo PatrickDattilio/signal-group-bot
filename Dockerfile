@@ -49,7 +49,14 @@ COPY signalbot-kt/src/main/resources/config.example.yaml /app/config.example.yam
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# The eclipse-temurin:25-jre image is built on Ubuntu Noble (24.04), which
+# ships a default `ubuntu` user + group at UID/GID 1000. We want our app
+# user at 1000 for a consistent non-root runtime across hosts, so evict the
+# placeholder user first. The `|| true` keeps this idempotent against any
+# future base image that no longer pre-creates it.
 RUN mkdir -p /data \
+ && (userdel -r ubuntu  2>/dev/null || true) \
+ && (groupdel    ubuntu 2>/dev/null || true) \
  && useradd -m -u 1000 signalbot \
  && chown -R signalbot:signalbot /app /data /opt/signal-cli
 USER signalbot

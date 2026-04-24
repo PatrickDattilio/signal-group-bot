@@ -169,41 +169,126 @@ and immune to image changes.
 
 ### 5c. Generate the admin password hash
 
-Locally (any platform with Python):
+The robust cross-platform way is to run the hash generator from a
+scratch file — that avoids both bash's history-expansion trap (which
+mangles passwords containing `!` or backticks in `-c` one-liners) and
+MinTTY / Git Bash's broken `getpass` prompt:
 
 ```bash
-python3 -c "import bcrypt; print(bcrypt.hashpw(b'YourStrongPassword!', bcrypt.gensalt(rounds=12)).decode())"
+cat > /tmp/hash.py <<'PY'
+import bcrypt, getpass
+pw = getpass.getpass("password: ")
+print(bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=12)).decode())
+PY
+python3 /tmp/hash.py          # type password (hidden), get the hash
+rm /tmp/hash.py
 # -> $2b$12$abc... (paste the whole string into SIGNALBOT_ADMIN_PASSWORD_HASH)
 ```
 
-If you prefer Werkzeug (PBKDF2), that's also accepted by the verifier:
+If you prefer Werkzeug (PBKDF2) it's accepted by the same verifier —
+swap the body of `/tmp/hash.py` for:
 
-```bash
-python3 -c "from werkzeug.security import generate_password_hash as g; print(g('YourStrongPassword!'))"
+```python
+from werkzeug.security import generate_password_hash
+import getpass
+print(generate_password_hash(getpass.getpass("password: ")))
 ```
 
-### 5d. Optional one-shot seed (migrating existing state)
+#### One-liner variants per shell
 
-Only if you already ran a previous SignalBot install and want to carry
-forward `messaged.json` / `metrics.json`. Skip otherwise — the container
-starts with an empty DB and builds state from Signal.
+If you'd rather not touch a scratch file:
+
+- **Linux / macOS bash or zsh** — single quotes around `-c` to block
+  history expansion:
+  ```bash
+  python3 -c 'import bcrypt, getpass; print(bcrypt.hashpw(getpass.getpass("password: ").encode(), bcrypt.gensalt(rounds=12)).decode())'
+  ```
+
+- **Git Bash on Windows (MinTTY)** — prefix with `winpty`, otherwise
+  `getpass` appears to hang because MinTTY hides the prompt:
+  ```bash
+  winpty python3 -c 'import bcrypt, getpass; print(bcrypt.hashpw(getpass.getpass("password: ").encode(), bcrypt.gensalt(rounds=12)).decode())'
+  ```
+  If `winpty` is missing, drop `getpass` and use `input()` instead (the
+  password will echo, so close the terminal afterwards):
+  ```bash
+  python3 -c 'import bcrypt; pw = input("password: "); print(bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=12)).decode())'
+  ```
+
+- **PowerShell** — quoting inverts; use double quotes outside, single
+  inside:
+  ```powershell
+  python -c "import bcrypt, getpass; print(bcrypt.hashpw(getpass.getpass('password: ').encode(), bcrypt.gensalt(rounds=12)).decode())"
+  ```
+
+### 5d. Optional: migrating existing state (skip on a fresh install)
+
+Only relevant if you already ran a previous SignalBot install and want
+to carry forward `messaged.json` / `metrics.json` (so the bot doesn't
+re-DM members you've already welcomed). Skip otherwise — the container
+boots with an empty DB and builds state from Signal.
+
+Two routes; **prefer Option 1** for typical state sizes.
+
+#### Option 1 — push the JSON files onto the volume (recommended)
+
+This reuses the same `railway run` + tarball pattern you'll use in
+step 7 for signal-cli data, then runs `migrate-json` inside the
+container to populate `/data/signalbot.db`. No environment variables,
+no base64, no Railway UI paste of 40 KB.
 
 ```bash
-# On your laptop (GNU base64 flags; use -b0 on macOS):
-base64 -w0 /path/to/messaged.json > store.b64
-base64 -w0 /path/to/metrics.json  > metrics.b64
+# From your SignalBot repo root:
+tar -czf - messaged.json metrics.json \
+  | railway run --service signalbot -- sh -c 'cd /data && tar -xzf -'
+
+# Run the one-time import (idempotent — safe to rerun):
+railway run --service signalbot -- \
+  sh -c 'cd /data && java -jar /app/signalbot.jar migrate-json'
+
+# Verify:
+railway run --service signalbot -- \
+  java -jar /app/signalbot.jar stats
 ```
 
-| Variable | Value |
-|---|---|
-| `SIGNALBOT_SEED_STORE_B64` | contents of `store.b64` |
-| `SIGNALBOT_SEED_METRICS_B64` | contents of `metrics.b64` |
+You can delete `/data/messaged.json` and `/data/metrics.json` from the
+volume afterwards — the SQLite DB at `/data/signalbot.db` is now the
+source of truth. If you leave them, `entrypoint.sh` won't re-import on
+subsequent boots (it only seeds when `signalbot.db` is missing).
 
-`entrypoint.sh` decodes these into `/data/messaged.json` and
-`/data/metrics.json` the first time `/data/signalbot.db` is missing, runs
-`migrate-json`, and never re-seeds afterwards. **Delete both variables
-after the first successful boot** — they're no longer needed and they do
-contain member identifiers.
+#### Option 2 — one-shot seed via environment variables (fallback)
+
+Useful if you don't yet have Railway CLI access or prefer a fully
+declarative, dashboard-only setup. `entrypoint.sh` decodes the
+variables into `/data/messaged.json` and `/data/metrics.json` on first
+boot, runs `migrate-json`, and never re-seeds once `/data/signalbot.db`
+exists.
+
+```bash
+# In Git Bash / Linux / macOS:
+base64 -w0 messaged.json > store.b64     # use -b0 on macOS
+base64 -w0 metrics.json  > metrics.b64
+
+wc -c store.b64 metrics.b64              # sanity-check sizes
+```
+
+| Variable | Value | Typical size |
+|---|---|---|
+| `SIGNALBOT_SEED_STORE_B64` | contents of `store.b64` | ≈ 4/3 × `messaged.json` |
+| `SIGNALBOT_SEED_METRICS_B64` | contents of `metrics.b64` | usually <1 KB |
+
+Paste each value into Railway → Variables. For values over a few KB,
+click **Raw Editor** so you get a real textarea instead of a one-line
+input.
+
+> **Housekeeping:**
+>
+> - `.gitignore` covers `messaged.json` / `metrics.json` but not
+>   `store.b64` / `metrics.b64`. Run `rm store.b64 metrics.b64` after
+>   you've pasted them — they contain member identifiers.
+> - **Delete both `SIGNALBOT_SEED_*_B64` variables from Railway after
+>   the first successful boot** — they're no longer needed and the
+>   service definition is cleaner without them.
 
 ### 5e. Do NOT set
 
