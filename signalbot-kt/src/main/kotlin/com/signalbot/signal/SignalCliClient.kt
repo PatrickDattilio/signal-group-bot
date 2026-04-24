@@ -469,6 +469,42 @@ class SignalCliClient(
         return n == uid.trim() || n == num.trim()
     }
 
+    /**
+     * Force signal-cli to create a local recipient-store entry for [recipientId].
+     *
+     * `listContacts --recipient=<uuid>` is documented to "refresh" the profile,
+     * but in practice if the UUID isn't already in the recipient store the
+     * command returns an empty list and doesn't create the entry either.
+     * That's the exact situation for group-join requesters who share only a
+     * UUID (no phone number) - they never land in the store through normal
+     * channels until you message them or they're approved into the group.
+     *
+     * `updateContact` creates a store entry on first use. We pass the safest
+     * possible no-op fields: a blank nick name and 0 expiration. Both are
+     * purely local, don't touch the profile-name, and won't overwrite real
+     * data once signal-cli actually fetches the profile.
+     *
+     * Returns true if the call succeeded (entry now exists), false otherwise.
+     */
+    private fun touchContact(recipientId: String): Boolean {
+        if (recipientId.isBlank()) return false
+        val params = buildJsonObject {
+            put("recipient", recipientId.trim())
+            put("expiration", 0)
+        }
+        for (method in listOf("updateContact", "update_contact")) {
+            try {
+                call(method, params, retries = 0)
+                return true
+            } catch (_: SignalCliException) {
+                continue
+            } catch (_: SignalCliConnectionException) {
+                return false
+            }
+        }
+        return false
+    }
+
     private fun lookupRecipientName(recipientId: String): String? {
         if (recipientId.isBlank()) return null
         for (method in listOf("listContacts", "list_contacts")) {
@@ -543,11 +579,11 @@ class SignalCliClient(
             .filter { it.isNotBlank() }
             .distinct()
 
-        if (missing.isNotEmpty()) {
-            if (debug != null) debug["profile_refresh_requested"] = missing
-            val refreshed = try {
+        fun refreshByRecipients(recipients: List<String>): List<JsonObject> {
+            if (recipients.isEmpty()) return emptyList()
+            return try {
                 val result = call("listContacts", buildJsonObject {
-                    put("recipient", JsonArray(missing.map { JsonPrimitive(it) }))
+                    put("recipient", JsonArray(recipients.map { JsonPrimitive(it) }))
                 }, retries = 0)
                 when (result) {
                     is JsonArray -> result.mapNotNull { it as? JsonObject }
@@ -565,13 +601,39 @@ class SignalCliClient(
                 if (debug != null) debug["profile_refresh_error"] = "connection: ${e.message}"
                 emptyList()
             }
-            if (debug != null) {
-                debug["profile_refresh_returned"] = refreshed.size
-                if (refreshed.isNotEmpty()) {
-                    debug["profile_refresh_sample"] = refreshed.first().toString().take(500)
-                }
-            }
+        }
+
+        if (missing.isNotEmpty()) {
+            if (debug != null) debug["profile_refresh_requested"] = missing
+
+            // Pass 2a: ask signal-cli to refresh profiles for anyone we don't
+            // already know about. If they're already in the recipient store
+            // this returns them (with freshly-fetched profile data).
+            var refreshed = refreshByRecipients(missing)
+            if (debug != null) debug["profile_refresh_returned"] = refreshed.size
             refreshed.forEach(::indexContact)
+
+            // Pass 2b: anyone STILL missing likely isn't in the recipient
+            // store at all (classic group-join requester who only shared a
+            // UUID). updateContact creates the store entry with no-op fields,
+            // then we retry the refresh - this time signal-cli will actually
+            // fetch and return the profile.
+            val stillMissing = missing.filter { !nameById.containsKey(it) }
+            if (stillMissing.isNotEmpty()) {
+                val touched = stillMissing.count { touchContact(it) }
+                if (debug != null) {
+                    debug["touch_contact_attempted"] = stillMissing.size
+                    debug["touch_contact_succeeded"] = touched
+                }
+                val retried = refreshByRecipients(stillMissing)
+                if (debug != null) {
+                    debug["profile_refresh_retry_returned"] = retried.size
+                    if (retried.isNotEmpty()) {
+                        debug["profile_refresh_retry_sample"] = retried.first().toString().take(500)
+                    }
+                }
+                retried.forEach(::indexContact)
+            }
         }
 
         val out = mutableListOf<String?>()
