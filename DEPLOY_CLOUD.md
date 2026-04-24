@@ -121,7 +121,7 @@ railway init        # creates a new project linked to this repo
 ### Service name — export `$SERVICE` once, reuse everywhere
 
 Railway names the service **`web`** by default when you deploy from a
-GitHub repo. Every `railway run` / `railway shell` / `railway logs` call
+GitHub repo. Every `railway ssh` / `railway shell` / `railway logs` call
 in the rest of this guide targets a service by name, so pick a shell
 variable and use it:
 
@@ -266,7 +266,7 @@ Two routes; **prefer Option 1** for typical state sizes.
 
 #### Option 1 — push the JSON files onto the volume (recommended)
 
-This reuses the same `railway run` + tarball pattern you'll use in
+This reuses the same `railway ssh` + tarball pattern you'll use in
 step 7 for signal-cli data, then runs `migrate-json` inside the
 container to populate `/data/signalbot.db`. No environment variables,
 no base64, no Railway UI paste of 40 KB.
@@ -350,7 +350,7 @@ Railway rebuilds automatically on push.
 This is the step that derails most first-time setups. You're copying
 `$SIGNAL_CLI_DATA` from step 1 into `/data/signal-cli` inside the container.
 
-### Option A — stream over `railway run` (recommended)
+### Option A — stream over `railway ssh` (recommended)
 
 From the directory **containing** `signal-cli/`:
 
@@ -358,13 +358,24 @@ From the directory **containing** `signal-cli/`:
 cd "$HOME/signalbot-data"      # signal-cli/ lives here as a sibling
 ls                             # should list: signal-cli
 
-# Pipe a tarball through railway run directly into /data
+# Pipe a tarball through railway ssh directly into /data inside the
+# running container. railway ssh attaches to the deployed service, so
+# /data is the mounted persistent volume.
 tar -czf - signal-cli | \
   railway ssh --service "$SERVICE" -- \
-    sh -c 'cd /data && tar -xzf -'
+    bash -c 'tar -xzf - -C /data'
 ```
 
-### Option B — `railway shell` + base64 (if stdin piping misbehaves)
+> Common mistake: do **not** use `railway run` here. `railway run`
+> executes the command on your laptop with Railway's env vars - not
+> inside the container - so it has no `/data` and fails with
+> `sh: cd: /data: No such file or directory`.
+
+### Option B — `railway ssh` + base64 (if stdin piping misbehaves)
+
+Some Railway CLI builds don't stream stdin reliably over `ssh`. Fallback
+pattern: stage the tarball as a temporary env var, attach to the
+container, and decode it on the other side.
 
 ```bash
 # on your laptop
@@ -372,7 +383,7 @@ tar -czf - signal-cli | base64 -w0 > signal-cli.tgz.b64
 # paste contents into a temporary TARBALL_B64 env var in Railway (delete after)
 
 # then attach to the container:
-railway shell --service "$SERVICE"
+railway ssh --service "$SERVICE"
 # inside:
 echo "$TARBALL_B64" | base64 -d | tar -xzf - -C /data
 exit
