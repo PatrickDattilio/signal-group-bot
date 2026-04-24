@@ -61,10 +61,29 @@ fi
 
 # ---------------------------------------------------------------------------
 # 1. Find the linked signal-cli account, if one has been uploaded.
-#    signal-cli stores each account as a file under <config>/data/<E164>.
+#
+#    Layout changed across signal-cli versions:
+#      * <= 0.11 stored each account as a file named by its E.164 number,
+#        e.g. /data/signal-cli/data/+15551234567
+#      * >= 0.12 stores accounts under opaque numeric IDs (e.g. 515778) and
+#        keeps the E.164 -> ID mapping in /data/signal-cli/data/accounts.json.
+#        The daemon's -a flag still expects the E.164 number, so we have to
+#        read it out of accounts.json.
+#
+#    We try the modern layout first (accounts.json), then fall back to the
+#    legacy filename-based layout so old snapshots still boot.
 # ---------------------------------------------------------------------------
 ACCOUNT=""
-if [ -d "$SIGNAL_DATA/data" ]; then
+ACCOUNTS_JSON="$SIGNAL_DATA/data/accounts.json"
+if [ -f "$ACCOUNTS_JSON" ]; then
+  # Pull the first "number": "+..." value without pulling in jq. `tr` flattens
+  # the JSON so the regex works on pretty-printed and minified files alike.
+  ACCOUNT="$(tr -d '\n\r' < "$ACCOUNTS_JSON" \
+             | grep -oE '"number"[[:space:]]*:[[:space:]]*"\+[0-9]+"' \
+             | head -n1 \
+             | grep -oE '\+[0-9]+' || true)"
+fi
+if [ -z "$ACCOUNT" ] && [ -d "$SIGNAL_DATA/data" ]; then
   ACCOUNT="$(find "$SIGNAL_DATA/data" -maxdepth 1 -type f -name '+*' -printf '%f\n' 2>/dev/null \
              | head -n1 || true)"
 fi
