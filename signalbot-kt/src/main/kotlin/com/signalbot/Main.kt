@@ -21,13 +21,13 @@ import com.signalbot.store.JsonImport
 import com.signalbot.store.MessagedStore
 import com.signalbot.store.MetricsStore
 import com.signalbot.web.WebAppContext
-import com.signalbot.web.startWebServer
+import com.signalbot.web.startWebServerAsync
+import com.signalbot.web.startWebServerBlocking
+import java.util.concurrent.atomic.AtomicBoolean
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.cancel
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -88,19 +88,35 @@ class RunCmd : CliktCommand(name = "run") {
             val botJob = launch(Dispatchers.Default) {
                 runBot(config)
             }
-            if (!headless) {
+            val webServer = if (!headless) {
                 val host = System.getenv("SIGNALBOT_UI_HOST") ?: "127.0.0.1"
                 val port = (System.getenv("SIGNALBOT_UI_PORT") ?: System.getenv("PORT") ?: "5000").toInt()
                 val ctx = WebAppContext(ConfigLoader.defaultConfigPath())
-                launch(Dispatchers.IO) {
-                    startWebServer(ctx, host, port, wait = true)
-                }
+                startWebServerAsync(ctx, host, port)
+            } else {
+                null
             }
-            Runtime.getRuntime().addShutdownHook(Thread {
-                logger.info { "Shutdown signal received, stopping bot" }
+            val stopped = AtomicBoolean(false)
+            fun shutdown() {
+                if (!stopped.compareAndSet(false, true)) return
+                logger.info { "Shutting down SignalBot (web server + bot job)" }
+                runCatching {
+                    webServer?.stop(1000, 5000)
+                }.onFailure { e -> logger.warn(e) { "Error stopping web server" } }
                 botJob.cancel()
-            })
-            botJob.join()
+            }
+            val hook = Thread {
+                shutdown()
+            }
+            Runtime.getRuntime().addShutdownHook(hook)
+            try {
+                botJob.join()
+            } finally {
+                runCatching {
+                    Runtime.getRuntime().removeShutdownHook(hook)
+                }
+                shutdown()
+            }
         }
     }
 }
@@ -204,7 +220,7 @@ class UiCmd : CliktCommand(name = "ui") {
         val ctx = WebAppContext(ConfigLoader.defaultConfigPath())
         echo("Starting UI at http://$host:$port")
         echo("Configure approve_add_to_group_id and optionally approve_add_to_group_id_2 in config.yaml to add approved members to additional groups.")
-        startWebServer(ctx, host, port, wait = true)
+        startWebServerBlocking(ctx, host, port)
     }
 }
 

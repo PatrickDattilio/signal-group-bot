@@ -31,6 +31,27 @@ jobs:
       - name: Build Docker image
         run: docker build -t signalbot:test .
 
-      - name: Verify image contents
+      - name: Start container and wait for /health
         run: |
-          docker run --rm signalbot:test sh -c 'test -f /app/signalbot.jar && test -x /app/entrypoint.sh && test -f /usr/local/bin/signal-cli'
+          set -euo pipefail
+          docker run -d --name signalbot-ci -p 127.0.0.1:18080:5000 \
+            -e PORT=5000 -e SIGNALBOT_MODE=ui \
+            signalbot:test
+          cleanup() { docker rm -f signalbot-ci >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          ok=1
+          for i in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:18080/health" 2>/dev/null | grep -q '"ok"'; then
+              ok=0
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ok" -ne 0 ]; then
+            echo "--- docker logs (tail) ---" >&2
+            docker logs --tail 80 signalbot-ci >&2 || true
+            echo "---------------------------" >&2
+            echo "GET /health did not succeed within 120s" >&2
+            exit 1
+          fi
+          echo "Container passed live /health check"

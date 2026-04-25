@@ -10,16 +10,6 @@ import org.jetbrains.exposed.sql.upsert
 /** SQLite-backed replacement for src/store.py. */
 class MessagedStore {
 
-    /**
-     * Legacy: true if [getMessagedAt] is within [cooldownSeconds] of now.
-     * For bot vetting behavior use [isWithinVettingCooldown] instead.
-     */
-    fun wasMessaged(member: Member, cooldownSeconds: Int = 0): Boolean {
-        val ts = getMessagedAt(member) ?: return false
-        if (cooldownSeconds <= 0) return true
-        return (System.currentTimeMillis() / 1000.0 - ts) < cooldownSeconds
-    }
-
     /** Cooldown for vetting DMs (intro + follow-up), not welcome or filter-only. */
     fun isWithinVettingCooldown(member: Member, cooldownSeconds: Int): Boolean {
         if (cooldownSeconds <= 0) return false

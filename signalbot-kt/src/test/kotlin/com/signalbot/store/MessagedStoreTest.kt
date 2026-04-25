@@ -20,23 +20,22 @@ class MessagedStoreTest {
     }
 
     @Test
-    fun `mark and check messaged`() {
+    fun `markMessaged sets getMessagedAt`() {
         val store = MessagedStore()
         val member = Member(uuid = "test-uuid")
-        assertFalse(store.wasMessaged(member))
+        assertNull(store.getMessagedAt(member))
         store.markMessaged(member)
-        assertTrue(store.wasMessaged(member))
+        assertNotNull(store.getMessagedAt(member))
     }
 
     @Test
-    fun `respects cooldown`() {
+    fun `getMessagedAt within generic cooldown window`() {
         val store = MessagedStore()
         val member = Member(uuid = "test-uuid")
         store.markMessaged(member)
-        assertTrue(store.wasMessaged(member, cooldownSeconds = 10))
-        // Overwrite timestamp to 20s ago
+        assertTrue(lastTouchWithinCooldown(store, member, cooldownSeconds = 10))
         store.markMessaged(member, timestamp = System.currentTimeMillis() / 1000.0 - 20)
-        assertFalse(store.wasMessaged(member, cooldownSeconds = 10))
+        assertFalse(lastTouchWithinCooldown(store, member, cooldownSeconds = 10))
     }
 
     @Test
@@ -44,7 +43,7 @@ class MessagedStoreTest {
         val store = MessagedStore()
         val member = Member(uuid = "test-uuid")
         store.markWelcomeSent(member)
-        assertTrue(store.wasMessaged(member, cooldownSeconds = 10))
+        assertNotNull(store.getMessagedAt(member))
         assertFalse(store.isWithinVettingCooldown(member, cooldownSeconds = 10))
     }
 
@@ -52,7 +51,7 @@ class MessagedStoreTest {
     fun `persistence across instances`() {
         val member = Member(uuid = "test-uuid")
         MessagedStore().markMessaged(member)
-        assertTrue(MessagedStore().wasMessaged(member))
+        assertNotNull(MessagedStore().getMessagedAt(member))
     }
 
     @Test
@@ -79,5 +78,11 @@ class MessagedStoreTest {
     @Test
     fun `empty member key`() {
         assertEquals("{}", Member().key())
+    }
+
+    private fun lastTouchWithinCooldown(store: MessagedStore, member: Member, cooldownSeconds: Int): Boolean {
+        if (cooldownSeconds <= 0) return store.getMessagedAt(member) != null
+        val ts = store.getMessagedAt(member) ?: return false
+        return (System.currentTimeMillis() / 1000.0 - ts) < cooldownSeconds
     }
 }

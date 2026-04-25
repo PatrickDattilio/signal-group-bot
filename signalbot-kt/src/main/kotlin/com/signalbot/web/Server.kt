@@ -45,13 +45,30 @@ class WebAppContext(
     }
 }
 
-fun startWebServer(context: WebAppContext, host: String, port: Int, wait: Boolean = true) {
-    val server = embeddedServer(Netty, host = host, port = port) {
+private fun createNettyServer(context: WebAppContext, host: String, port: Int) =
+    embeddedServer(Netty, host = host, port = port) {
         webModule(context)
     }
+
+/**
+ * Blocks the current thread until the server stops (e.g. SIGTERM stops the engine).
+ * Used by [com.signalbot.UiCmd].
+ */
+fun startWebServerBlocking(context: WebAppContext, host: String, port: Int) {
+    val server = createNettyServer(context, host, port)
     logger.info { "Starting UI at http://$host:$port" }
-    server.start(wait = wait)
+    server.start(wait = true)
 }
+
+/**
+ * Starts the Netty server in the background. Caller must call [io.ktor.server.engine.EmbeddedServer.stop] on shutdown.
+ * Used by [com.signalbot.RunCmd] together with the bot loop.
+ */
+fun startWebServerAsync(context: WebAppContext, host: String, port: Int) =
+    createNettyServer(context, host, port).also { server ->
+        logger.info { "Starting UI at http://$host:$port" }
+        server.start(wait = false)
+    }
 
 fun Application.webModule(context: WebAppContext) {
     install(ContentNegotiation) {
