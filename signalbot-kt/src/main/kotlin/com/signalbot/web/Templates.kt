@@ -21,6 +21,11 @@ object Templates {
     .status { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
     .status.messaged { background: #2e7d32; color: #fff; }
     .status.not_messaged { background: #666; color: #fff; }
+    .status.pending { background: #555; color: #fff; }
+    .status.vetting_sent { background: #1565c0; color: #fff; }
+    .status.vetting_followup_sent { background: #0d47a1; color: #fff; }
+    .status.welcome_sent { background: #2e7d32; color: #fff; }
+    .status.filter_skipped { background: #b45309; color: #fff; }
     .welcome-btn { padding: 0.4rem 0.8rem; cursor: pointer; background: #4361ee; color: #fff; border: none; border-radius: 6px; font-weight: 500; margin-right: 0.4rem; }
     .welcome-btn:hover { background: #3a56d4; }
     .welcome-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -56,8 +61,8 @@ object Templates {
       <tr>
         <th>Name</th>
         <th>Number / UUID</th>
-        <th>Status</th>
-        <th>Messaged at</th>
+        <th>Pipeline</th>
+        <th>Last activity</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -159,11 +164,18 @@ object Templates {
             if (uuid) return 'Guest ' + uuid.slice(0, 8);
             return '—';
           }
+          function pipelineLabel(m) {
+            if (m.intake_label) return m.intake_label;
+            return m.status === 'messaged' ? 'Messaged' : 'Not messaged';
+          }
+          function pipelineClass(m) {
+            return m.intake_state || (m.status === 'messaged' ? 'messaged' : 'not_messaged');
+          }
           tbody.innerHTML = list.map(m => `
             <tr data-uuid="${'$'}{escapeHtml(m.uuid || '')}" data-number="${'$'}{escapeHtml(m.number || '')}">
               <td>${'$'}{escapeHtml(displayName(m))}</td>
               <td>${'$'}{escapeHtml(m.number || m.uuid || '—')}</td>
-              <td><span class="status ${'$'}{m.status}">${'$'}{m.status === 'messaged' ? 'Messaged' : 'Not messaged'}</span></td>
+              <td><span class="status ${'$'}{pipelineClass(m)}" title="${'$'}{escapeHtml(pipelineLabel(m))}">${'$'}{escapeHtml(pipelineLabel(m))}</span></td>
               <td>${'$'}{escapeHtml(m.messaged_at || '—')}</td>
               <td class="actions-cell">
                 <button class="welcome-btn" type="button">Send welcome</button>
@@ -175,9 +187,11 @@ object Templates {
           tbody.querySelectorAll('.welcome-btn').forEach(btn => {
             btn.addEventListener('click', function() {
               const row = this.closest('tr');
-              postMember('/api/send-welcome', { uuid: row.dataset.uuid, number: row.dataset.number }, this, function() {
+              postMember('/api/send-welcome', { uuid: row.dataset.uuid, number: row.dataset.number }, this, function(data) {
                 const st = row.querySelector('.status');
-                if (st) { st.className = 'status messaged'; st.textContent = 'Messaged'; }
+                const ic = (data && data.intake_state) ? data.intake_state : 'welcome_sent';
+                const il = (data && data.intake_label) ? data.intake_label : 'Welcome / rules sent';
+                if (st) { st.className = 'status ' + ic; st.textContent = il; st.title = il; }
                 const tds = row.querySelectorAll('td');
                 if (tds.length >= 4) {
                   tds[3].textContent = new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' });

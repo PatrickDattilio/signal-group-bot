@@ -40,6 +40,15 @@ class MessagedStoreTest {
     }
 
     @Test
+    fun `vetting cooldown ignores welcome-only contact`() {
+        val store = MessagedStore()
+        val member = Member(uuid = "test-uuid")
+        store.markWelcomeSent(member)
+        assertTrue(store.wasMessaged(member, cooldownSeconds = 10))
+        assertFalse(store.isWithinVettingCooldown(member, cooldownSeconds = 10))
+    }
+
+    @Test
     fun `persistence across instances`() {
         val member = Member(uuid = "test-uuid")
         MessagedStore().markMessaged(member)

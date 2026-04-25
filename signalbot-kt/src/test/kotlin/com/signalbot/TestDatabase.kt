@@ -23,6 +23,7 @@ object TestDatabase {
         transaction {
             SchemaUtils.drop(MessagedTable, MetricsTable, MetricsErrorsTable)
             SchemaUtils.create(MessagedTable, MetricsTable, MetricsErrorsTable)
+            SchemaUtils.createMissingTablesAndColumns(MessagedTable, MetricsTable, MetricsErrorsTable, withLogs = false)
         }
         return file
     }

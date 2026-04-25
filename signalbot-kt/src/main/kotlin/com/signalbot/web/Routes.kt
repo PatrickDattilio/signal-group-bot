@@ -4,6 +4,9 @@ import com.signalbot.bot.MessageTemplate
 import com.signalbot.signal.Member
 import com.signalbot.signal.SignalCliClient
 import com.signalbot.signal.SignalCliException
+import com.signalbot.store.IntakeState
+import com.signalbot.store.deriveIntakeStateInQueue
+import com.signalbot.store.displayLabel
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
@@ -34,6 +37,8 @@ import java.time.format.DateTimeFormatter
 private val logger = KotlinLogging.logger {}
 
 private val UTC_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'").withZone(ZoneOffset.UTC)
+
+private fun formatOptionalTs(ts: Double?): String? = ts?.let { UTC_FMT.format(Instant.ofEpochSecond(it.toLong())) }
 
 fun Application.installRoutes(context: WebAppContext) {
     routing {
@@ -131,15 +136,25 @@ fun Application.installRoutes(context: WebAppContext) {
                 )
             }
             val requesting = members.mapIndexed { i, m ->
+                context.store.clearStaleTerminalStateForRequester(m)
+                val row = context.store.getRow(m)
                 val ts = context.store.getMessagedAt(m)
                 val status = if (ts != null) "messaged" else "not_messaged"
                 val messagedAt = ts?.let { UTC_FMT.format(Instant.ofEpochSecond(it.toLong())) }
+                val intakeState = if (row != null) deriveIntakeStateInQueue(row) else IntakeState.PENDING
+                val intakeLabel = intakeState.displayLabel()
                 buildJsonObject {
                     put("uuid", m.uuid)
                     put("number", m.number)
                     put("name", namesResult.names.getOrNull(i))
                     put("status", status)
                     put("messaged_at", messagedAt)
+                    put("intake_state", intakeState.apiName)
+                    put("intake_label", intakeLabel)
+                    put("vetting_sent_at", formatOptionalTs(row?.vettingSentAt))
+                    put("vetting_followup_sent_at", formatOptionalTs(row?.vettingFollowupSentAt))
+                    put("welcome_sent_at", formatOptionalTs(row?.welcomeSentAt))
+                    put("user_replied_at", formatOptionalTs(row?.userRepliedAt))
                 }
             }
             val out = buildJsonObject {
@@ -187,10 +202,14 @@ fun Application.installRoutes(context: WebAppContext) {
                 call.respond(HttpStatusCode.InternalServerError, jsonError(e.message ?: "error"))
                 return@post
             }
-            context.store.markMessaged(member)
+            context.store.markWelcomeSent(member)
+            val row = context.store.getRow(member)!!
+            val st = deriveIntakeStateInQueue(row)
             call.respond(buildJsonObject {
                 put("ok", true)
                 put("welcome_sent", true)
+                put("intake_state", st.apiName)
+                put("intake_label", st.displayLabel())
             })
         }
 
@@ -209,6 +228,7 @@ fun Application.installRoutes(context: WebAppContext) {
                 call.respond(HttpStatusCode.InternalServerError, jsonError(e.message ?: "error"))
                 return@post
             }
+            context.store.markDenied(member)
             call.respond(buildJsonObject {
                 put("ok", true)
                 put("denied", true)
@@ -244,6 +264,7 @@ fun Application.installRoutes(context: WebAppContext) {
                 )
                 return@post
             }
+            context.store.markApprovedMain(member)
             for ((i, gid) in addToGroupIds.withIndex()) {
                 try {
                     withContext(Dispatchers.IO) { client.addMembersToGroup(cfg.account, gid, listOf(member)) }
@@ -254,6 +275,10 @@ fun Application.installRoutes(context: WebAppContext) {
                         put("approved", true)
                     })
                     return@post
+                }
+                when (i) {
+                    0 -> context.store.markExtraGroup1(member)
+                    1 -> context.store.markExtraGroup2(member)
                 }
             }
             call.respond(buildJsonObject {

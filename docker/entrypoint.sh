@@ -10,7 +10,7 @@
 #   2. Optionally seed /data/messaged.json + /data/metrics.json from base64
 #      env vars, then import them into /data/signalbot.db via migrate-json.
 #   3. Start the signal-cli daemon on the loopback TCP port.
-#   4. Exec the Kotlin UI (and bot polling loop) as PID 1's child.
+#   4. Exec the Kotlin process: UI only, or UI + polling bot (see SIGNALBOT_MODE).
 #
 # Designed to be idempotent: re-running it on a populated /data is safe.
 
@@ -154,9 +154,27 @@ cleanup() {
 trap cleanup TERM INT
 
 # ---------------------------------------------------------------------------
-# 4. Exec the Kotlin UI. SIGNAL_CLI_SOCKET is picked up by SignalCliClient.
+# 4. Exec SignalBot. SIGNAL_CLI_SOCKET is picked up by SignalCliClient.
+#
+# SIGNALBOT_MODE:
+#   ui  (default) — admin web UI only; no automatic polling / vetting DMs.
+#   run — same UI plus runBot (poll_interval_seconds, vetting messages, etc.).
+#
+# For "run", the JVM subcommand does not take --host; bind address comes from
+# SIGNALBOT_UI_HOST (default 0.0.0.0 here so Railway's health check can reach /health).
 # ---------------------------------------------------------------------------
 export SIGNAL_CLI_SOCKET="$TCP"
+export SIGNALBOT_UI_PORT="$PORT"
+MODE="${SIGNALBOT_MODE:-ui}"
+export SIGNALBOT_UI_HOST="${SIGNALBOT_UI_HOST:-0.0.0.0}"
 
-log "launching SignalBot UI on port $PORT"
-exec java -jar /app/signalbot.jar ui --host 0.0.0.0 --port "$PORT"
+case "$MODE" in
+  run)
+    log "launching SignalBot (mode=run: UI + polling bot) on ${SIGNALBOT_UI_HOST}:$PORT"
+    exec java -jar /app/signalbot.jar run
+    ;;
+  ui|*)
+    log "launching SignalBot (mode=ui: admin UI only) on 0.0.0.0:$PORT"
+    exec java -jar /app/signalbot.jar ui --host 0.0.0.0 --port "$PORT"
+    ;;
+esac

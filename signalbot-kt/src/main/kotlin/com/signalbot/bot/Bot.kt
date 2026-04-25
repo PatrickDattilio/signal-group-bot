@@ -91,10 +91,6 @@ suspend fun runBot(
             for (member in pending) {
                 if (!coroutineContext.isActive) break
 
-                if (store.wasMessaged(member, cooldownSeconds = cooldown)) {
-                    logger.debug { "Skipping member (already messaged within cooldown): ${member.toAddressMap()}" }
-                    continue
-                }
                 if (member.uuid.isBlank() && member.number.isBlank()) {
                     logger.warn { "Skipping member with no uuid/number: $member" }
                     continue
@@ -109,13 +105,27 @@ suspend fun runBot(
                 }
 
                 val decision = memberFilter.shouldApprove(member)
-                if (!decision.shouldApprove) {
-                    logger.info { "Skipping member ${member.toAddressMap()}: ${decision.reason}" }
-                    store.markMessaged(member)
+                if (store.isFilterSkipped(member)) {
+                    if (decision.shouldApprove) {
+                        store.clearFilterSkipped(member)
+                    } else {
+                        logger.debug { "Skipping member (filter / blocklist): ${member.toAddressMap()}" }
+                        continue
+                    }
+                }
+
+                if (store.isWithinVettingCooldown(member, cooldown)) {
+                    logger.debug { "Skipping member (vetting within cooldown): ${member.toAddressMap()}" }
                     continue
                 }
 
-                val isFollowUp = store.wasMessaged(member, cooldownSeconds = 0) && followUpTemplate != null
+                if (!decision.shouldApprove) {
+                    logger.info { "Skipping member ${member.toAddressMap()}: ${decision.reason}" }
+                    store.markFilterSkipped(member)
+                    continue
+                }
+
+                val isFollowUp = store.shouldSendVettingFollowupTemplate(member, followUpTemplate != null)
                 val template = if (isFollowUp) followUpTemplate!! else messageTemplate
                 val body = template.render(member)
 
@@ -130,7 +140,11 @@ suspend fun runBot(
 
                 try {
                     client.sendMessage(account, member, body)
-                    store.markMessaged(member)
+                    if (isFollowUp) {
+                        store.markVettingFollowupSent(member)
+                    } else {
+                        store.markVettingSent(member)
+                    }
                     metrics.recordMessageSent()
                     logger.info { "Sent ${if (isFollowUp) "follow-up" else "message"} to ${member.toAddressMap()} (filter: ${decision.reason})" }
                 } catch (e: SignalCliException) {
