@@ -79,3 +79,6 @@ desktop.ini
 *.tmp
 *.temp
 .cache/
+
+# Local signal-cli source clone (used to regenerate patches)
+.tmp-signal-cli-src/

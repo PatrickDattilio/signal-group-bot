@@ -14,6 +14,27 @@ RUN chmod +x ./gradlew && ./gradlew --version
 COPY signalbot-kt/src ./src
 RUN ./gradlew --no-daemon shadowJar
 
+# ---------- signal-cli (patched) ----------
+# Build signal-cli from the upstream tag and apply local patches in
+# docker/signal-cli-patches/ (e.g. store profile keys for v2 *requesting* members
+# so the bot can show names for join-queue users). Official release tarballs
+# are not modified; we compile from source here.
+# Java 25 is required by signal-cli v0.14.x. Keep SIGNAL_CLI_VERSION in sync
+# with the Kotlin runtime below when bumping signal-cli.
+FROM eclipse-temurin:25-jdk AS signal-cli
+WORKDIR /src
+ARG SIGNAL_CLI_VERSION=0.14.3
+ENV GRADLE_OPTS="-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m"
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+COPY docker/signal-cli-patches/ /patches/
+RUN git clone --depth 1 --branch "v${SIGNAL_CLI_VERSION}" \
+        https://github.com/AsamK/signal-cli.git . \
+    && git apply /patches/*.patch \
+    && chmod +x ./gradlew \
+    && ./gradlew --no-daemon installDist \
+    && /src/build/install/signal-cli/bin/signal-cli --version
+
 # ---------- runtime stage ----------
 # Java 25 is required by signal-cli v0.14.x. The Kotlin fat jar is built for
 # JVM 21 bytecode (see build.gradle.kts `jvmToolchain(21)`), which Java 25
@@ -23,12 +44,10 @@ RUN ./gradlew --no-daemon shadowJar
 FROM eclipse-temurin:25-jre
 WORKDIR /app
 
-ARG SIGNAL_CLI_VERSION=0.14.3
-
 # Runtime deps:
 #   ca-certificates - TLS to Signal servers
 #   curl            - healthcheck
-#   tar             - signal-cli tarball extraction
+#   tar             - ad-hoc archive ops
 #   bash            - entrypoint.sh
 #   tini            - PID 1 signal forwarding + zombie reaping
 #   gosu            - drop-privileges helper used by entrypoint.sh to step
@@ -43,13 +62,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Install signal-cli to /opt/signal-cli and symlink into PATH.
-RUN curl -fsSL -o /tmp/signal-cli.tar.gz \
-      "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VERSION}/signal-cli-${SIGNAL_CLI_VERSION}.tar.gz" \
- && tar -xzf /tmp/signal-cli.tar.gz -C /opt/ \
- && mv "/opt/signal-cli-${SIGNAL_CLI_VERSION}" /opt/signal-cli \
- && ln -s /opt/signal-cli/bin/signal-cli /usr/local/bin/signal-cli \
- && rm /tmp/signal-cli.tar.gz \
+# Install signal-cli to /opt/signal-cli (built from source in stage `signal-cli`)
+COPY --from=signal-cli /src/build/install/signal-cli/ /opt/signal-cli/
+RUN ln -s /opt/signal-cli/bin/signal-cli /usr/local/bin/signal-cli \
  && signal-cli --version
 
 COPY --from=build /build/build/libs/signalbot.jar /app/signalbot.jar
