@@ -1,0 +1,51 @@
+diff --git a/lib/src/main/java/org/asamk/signal/manager/helper/GroupHelper.java b/lib/src/main/java/org/asamk/signal/manager/helper/GroupHelper.java
+index 024e84f..bba4156 100644
+--- a/lib/src/main/java/org/asamk/signal/manager/helper/GroupHelper.java
++++ b/lib/src/main/java/org/asamk/signal/manager/helper/GroupHelper.java
+@@ -1,5 +1,7 @@
+ package org.asamk.signal.manager.helper;
+ 
++import com.google.protobuf.ByteString;
++
+ import org.asamk.signal.manager.api.AttachmentInvalidException;
+ import org.asamk.signal.manager.api.GroupId;
+ import org.asamk.signal.manager.api.GroupIdV1;
+@@ -557,17 +559,27 @@ public class GroupHelper {
+ 
+     private void storeProfileKeysFromMembers(final DecryptedGroup group) {
+         for (var member : group.members) {
+-            final var serviceId = ServiceId.parseOrThrow(member.aciBytes);
+-            final var recipientId = account.getRecipientResolver().resolveRecipient(serviceId);
+-            final var profileStore = account.getProfileStore();
+-            if (profileStore.getProfileKey(recipientId) != null) {
+-                // We already have a profile key, not updating it from a non-authoritative source
+-                continue;
+-            }
+-            try {
+-                profileStore.storeProfileKey(recipientId, new ProfileKey(member.profileKey.toByteArray()));
+-            } catch (InvalidInputException ignored) {
+-            }
++            storeProfileKeyFromAciAndKey(member.aciBytes, member.profileKey);
++        }
++        for (var member : group.requestingMembers) {
++            storeProfileKeyFromAciAndKey(member.aciBytes, member.profileKey);
++        }
++    }
++
++    private void storeProfileKeyFromAciAndKey(final ByteString aciBytes, final ByteString profileKey) {
++        if (aciBytes == null || aciBytes.isEmpty() || profileKey == null || profileKey.isEmpty()) {
++            return;
++        }
++        final var serviceId = ServiceId.parseOrThrow(aciBytes);
++        final var recipientId = account.getRecipientResolver().resolveRecipient(serviceId);
++        final var profileStore = account.getProfileStore();
++        if (profileStore.getProfileKey(recipientId) != null) {
++            // We already have a profile key, not updating it from a non-authoritative source
++            return;
++        }
++        try {
++            profileStore.storeProfileKey(recipientId, new ProfileKey(profileKey.toByteArray()));
++        } catch (InvalidInputException ignored) {
+         }
+     }
+ 
