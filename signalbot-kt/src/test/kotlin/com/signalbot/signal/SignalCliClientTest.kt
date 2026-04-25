@@ -117,6 +117,25 @@ class SignalCliClientTest {
     }
 
     @Test
+    fun `addMembersToGroup uses updateGroup over daemon`() {
+        val methodsSeen = CopyOnWriteArrayList<String>()
+        server = FakeRpcServer { method, _ ->
+            methodsSeen.add(method)
+            when (method) {
+                "updateGroup" -> FakeResponse.Ok("{}")
+                else -> FakeResponse.Ok("null")
+            }
+        }
+        val client = SignalCliClient(socketPath = "localhost:${server!!.port}", maxRetries = 0)
+        client.addMembersToGroup(
+            "+1",
+            "otherGid",
+            listOf(Member(uuid = "u1", number = "+99")),
+        )
+        assertTrue(methodsSeen.contains("updateGroup"))
+    }
+
+    @Test
     fun `listGroups unwraps array-in-object response`() {
         server = FakeRpcServer { _, _ ->
             FakeResponse.Ok("""{"groups":[{"id":"g1","name":"G1"}]}""")

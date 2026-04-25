@@ -8,7 +8,8 @@
 # On Linux: Unix socket path or host:port for TCP
 signal_cli:
   socket_path: "localhost:7583"  # TCP on Windows; or /path/to/socket on Linux
-  # cli_config_path: "C:\\Users\\You\\AppData\\Roaming\\signal-cli-cli"  # Required for approve: use a copy of signal-cli config. Create with: python main.py duplicate-signal-cli-config (with daemon stopped)
+  # cli_config_path: "C:\\Users\\You\\AppData\\Roaming\\signal-cli-cli"  # Only with try_cli_fallback_for_approve: true — duplicate data dir if JSON-RPC updateGroup fails
+  # try_cli_fallback_for_approve: false
 
 # The Signal account (admin of the group). E.164 format, e.g. +12025551234
 account: "+1234567890"

@@ -24,7 +24,9 @@ private val logger = KotlinLogging.logger {}
  * Client for signal-cli daemon (JSON-RPC 2.0 over TCP/Unix socket).
  * Mirrors src/signal_cli_client.py from the Python implementation.
  *
- * For approve/add/send fallbacks using the CLI subprocess, see SignalCliSubprocess.
+ * All operations use the daemon (JSON-RPC) by default. Optional CLI subprocess fallback
+ * (see [tryCliFallbackForApprove] and [cliConfigPath]) is only used when a non-daemon
+ * path is explicitly needed after an RPC error.
  */
 class SignalCliClient(
     socketPath: String? = null,
@@ -188,11 +190,8 @@ class SignalCliClient(
         return null
     }
 
-    fun listGroups(account: String? = null): List<JsonObject> {
-        if (cliConfigPath != null && account != null) {
-            val cliGroups = subprocess.listGroups(account)
-            if (cliGroups.isNotEmpty()) return cliGroups
-        }
+    /** @param account retained for API compatibility; the daemon uses the linked account. */
+    fun listGroups(@Suppress("UNUSED_PARAMETER") account: String? = null): List<JsonObject> {
         val result = call("listGroups") ?: return emptyList()
         return when (result) {
             is JsonArray -> result.mapNotNull { it as? JsonObject }
@@ -208,11 +207,8 @@ class SignalCliClient(
         }
     }
 
-    fun getGroup(account: String, groupId: String, useDaemon: Boolean = false): JsonObject {
-        if (cliConfigPath != null && !useDaemon) {
-            val g = subprocess.getGroup(account, groupId)
-            if (g != null) return g
-        }
+    /** @param useDaemon retained for API compatibility; all resolution uses the daemon. */
+    fun getGroup(account: String, groupId: String, @Suppress("UNUSED_PARAMETER") useDaemon: Boolean = false): JsonObject {
         for (paramName in listOf("groupId", "group_id")) {
             try {
                 val result = call("getGroup", buildJsonObject { put(paramName, groupId) })
@@ -338,10 +334,6 @@ class SignalCliClient(
     }
 
     fun sendMessage(account: String, recipient: Member, body: String): JsonElement? {
-        if (cliConfigPath != null && recipient.number.isNotBlank()) {
-            subprocess.sendMessage(account, recipient, body)
-            return null
-        }
         val rid = recipient.number.ifBlank { recipient.uuid }
         val recipientArr = if (rid.isBlank()) JsonArray(emptyList()) else JsonArray(listOf(JsonPrimitive(rid)))
         val params = buildJsonObject {
@@ -360,13 +352,35 @@ class SignalCliClient(
     }
 
     fun approveMembership(account: String, groupId: String, members: List<Member>): JsonElement? {
-        if (cliConfigPath == null) {
-            throw SignalCliException(
-                "Approve requires signal_cli.cli_config_path in config. " +
-                    "Run 'duplicate-signal-cli-config' (with daemon stopped), then set cli_config_path in config.yaml."
-            )
+        if (groupId.trim().isEmpty()) throw SignalCliException("group_id is required for approve.")
+        val memberIds = members.mapNotNull { m ->
+            val id = m.number.trim().ifBlank { m.uuid.trim() }
+            if (id.isBlank() || id == account.trim()) null else id
         }
-        return subprocess.updateGroupAddMembers(account, groupId, members, logPrefix = "approve_membership")
+        if (memberIds.isEmpty()) throw SignalCliException("No member uuid/number for approve.")
+
+        // Prefer JSON-RPC (same signal-cli process as the daemon) so admin approval works without a
+        // second config copy. Approve-join and add-member are both handled as updateGroup with new
+        // members when those IDs are in the server's requesting set (GroupHelper#updateGroupV2).
+        val rpcParams = buildJsonObject {
+            put("groupId", groupId.trim())
+            put("group_id", groupId.trim())
+            put("members", JsonArray(memberIds.map { JsonPrimitive(it) }))
+            if (account.isNotBlank()) put("account", account)
+        }
+        try {
+            return call("updateGroup", rpcParams, retries = 0)
+        } catch (e: SignalCliException) {
+            if (cliConfigPath == null || !tryCliFallbackForApprove) {
+                throw SignalCliException(
+                    "updateGroup (daemon) failed: ${e.message}. " +
+                        "If the group uses link-based join requests, ensure signal-cli is current. " +
+                        "Optional: set try_cli_fallback_for_approve: true and signal_cli.cli_config_path to enable CLI fallback.",
+                )
+            }
+            logger.warn { "approve_membership: JSON-RPC updateGroup failed, using CLI subprocess: ${e.message}" }
+            return subprocess.updateGroupAddMembers(account, groupId, members, logPrefix = "approve_membership")
+        }
     }
 
     fun denyMembership(account: String, groupId: String, members: List<Member>): JsonElement? {
@@ -423,33 +437,51 @@ class SignalCliClient(
 
     fun addMembersToGroup(account: String, groupId: String, members: List<Member>): JsonElement? {
         logger.info { "add_members_to_group: called with group_id=$groupId" }
-        if (cliConfigPath == null) {
-            throw SignalCliException(
-                "Adding to second group requires signal_cli.cli_config_path in config. " +
-                    "Run 'duplicate-signal-cli-config' (with daemon stopped), then set cli_config_path in config.yaml."
-            )
+        if (groupId.trim().isEmpty()) throw SignalCliException("group_id is required for add to group.")
+        val memberIds = members.mapNotNull { m ->
+            val id = m.number.trim().ifBlank { m.uuid.trim() }
+            if (id.isBlank() || id == account.trim()) null else id
         }
-        if (!subprocess.hasGroup(account, groupId)) {
-            throw SignalCliException(
-                "Duplicate config does not contain this group. Re-run 'duplicate-signal-cli-config' (with daemon stopped), then try again."
-            )
+        if (memberIds.isEmpty()) throw SignalCliException("No member uuid/number for add to group.")
+        val rpcParams = buildJsonObject {
+            put("groupId", groupId.trim())
+            put("group_id", groupId.trim())
+            put("members", JsonArray(memberIds.map { JsonPrimitive(it) }))
+            if (account.isNotBlank()) put("account", account)
         }
-        val delayMs = 2_000L
-        val retryDelayMs = 5_000L
-        for ((i, m) in members.withIndex()) {
-            try {
-                subprocess.updateGroupAddMembers(account, groupId, listOf(m), logPrefix = "add_members_to_group")
-            } catch (e: SignalCliException) {
-                logger.warn { "add_members_to_group: failed for member ${i + 1}/${members.size}, retrying once in ${retryDelayMs}ms: ${e.message}" }
-                Thread.sleep(retryDelayMs)
-                subprocess.updateGroupAddMembers(account, groupId, listOf(m), logPrefix = "add_members_to_group")
+        try {
+            return call("updateGroup", rpcParams, retries = 0)
+        } catch (e: SignalCliException) {
+            if (cliConfigPath == null || !tryCliFallbackForApprove) {
+                throw SignalCliException(
+                    "updateGroup (daemon) failed: ${e.message}. " +
+                        "Ensure your account is an admin of the target group. " +
+                        "Optional: set try_cli_fallback_for_approve: true and signal_cli.cli_config_path to enable CLI fallback.",
+                )
             }
-            if ((i + 1) % 10 == 0 || i + 1 == members.size) {
-                logger.info { "add_members_to_group: added ${i + 1}/${members.size}" }
+            if (!subprocess.hasGroup(account, groupId)) {
+                throw SignalCliException(
+                    "Duplicate config does not contain this group. Re-run 'duplicate-signal-cli-config' (with daemon stopped), then try again.",
+                )
             }
-            if (i + 1 < members.size) Thread.sleep(delayMs)
+            logger.warn { "add_members_to_group: JSON-RPC updateGroup failed, using CLI subprocess: ${e.message}" }
+            val delayMs = 2_000L
+            val retryDelayMs = 5_000L
+            for ((i, m) in members.withIndex()) {
+                try {
+                    subprocess.updateGroupAddMembers(account, groupId, listOf(m), logPrefix = "add_members_to_group")
+                } catch (e2: SignalCliException) {
+                    logger.warn { "add_members_to_group: failed for member ${i + 1}/${members.size}, retrying once in ${retryDelayMs}ms: ${e2.message}" }
+                    Thread.sleep(retryDelayMs)
+                    subprocess.updateGroupAddMembers(account, groupId, listOf(m), logPrefix = "add_members_to_group")
+                }
+                if ((i + 1) % 10 == 0 || i + 1 == members.size) {
+                    logger.info { "add_members_to_group: added ${i + 1}/${members.size}" }
+                }
+                if (i + 1 < members.size) Thread.sleep(delayMs)
+            }
+            return null
         }
-        return null
     }
 
     fun listContacts(allRecipients: Boolean = true): List<JsonObject> {

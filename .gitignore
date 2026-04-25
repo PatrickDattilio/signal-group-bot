@@ -41,6 +41,7 @@ env/
 
 # Configuration (user-specific)
 config.yaml
+config-for-railway-volume.yaml
 
 # Store and backups
 messaged.json
@@ -82,3 +83,4 @@ desktop.ini
 
 # Local signal-cli source clone (used to regenerate patches)
 .tmp-signal-cli-src/
+.signal-cli-upstream/

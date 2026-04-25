@@ -2,8 +2,8 @@
 signal-cli daemon client: connect via JSON-RPC over socket/TCP.
 Provides same interface as the former signald client: get_group, list_pending_members,
 send_message, approve_membership.
-Approve uses the signal-cli CLI (updateGroup -g -m) with a duplicate config (cli_config_path);
-the daemon does not implement approveMembership.
+Approve and add-to-group use JSON-RPC updateGroup on the daemon; optional CLI fallback
+when try_cli_fallback_for_approve and cli_config_path are set.
 """
 import json
 import logging
@@ -181,11 +181,8 @@ class SignalCliClient:
         return None
 
     def list_groups(self, account: Optional[str] = None) -> list[dict]:
-        """List all groups. When cli_config_path is set and account is given, use CLI (secondary) to avoid daemon. Otherwise use daemon."""
-        if self.cli_config_path and account:
-            cli_groups = self._list_groups_via_cli(account)
-            if cli_groups:
-                return cli_groups
+        """List all groups from the signal-cli daemon (JSON-RPC)."""
+        _ = account  # retained for API compatibility
         result = self._call("listGroups", {})
         if result is None:
             return []
@@ -199,12 +196,7 @@ class SignalCliClient:
         return []
 
     def get_group(self, account: str, group_id: str, use_daemon: bool = False) -> dict:
-        """Fetch group state. When cli_config_path is set and use_daemon is False, use CLI (secondary); otherwise use daemon.
-        Use use_daemon=True when you need full group state (e.g. requestingMembers); CLI listGroups does not include it."""
-        if self.cli_config_path and not use_daemon:
-            g = self._get_group_via_cli(account, group_id)
-            if g is not None:
-                return g
+        """Fetch group state from the signal-cli daemon. use_daemon is retained for API compatibility."""
         for param_name in ("groupId", "group_id"):
             try:
                 result = self._call("getGroup", {param_name: group_id})
@@ -317,11 +309,9 @@ class SignalCliClient:
         return {}
 
     def send_message(self, account: str, recipient_address: dict, message_body: str) -> dict:
-        """Send a direct message. When cli_config_path is set and recipient has a number, use CLI; else use daemon (daemon handles UUID-only recipients)."""
+        """Send a direct message via the signal-cli daemon (JSON-RPC)."""
         number = (recipient_address.get("number") or "").strip()
         uuid_val = (recipient_address.get("uuid") or "").strip()
-        if self.cli_config_path and number:
-            return self._send_message_via_cli(account, recipient_address, message_body)
         recipient = number or uuid_val or ""
         if not isinstance(recipient, list):
             recipient = [recipient] if recipient else []
@@ -518,13 +508,38 @@ class SignalCliClient:
         return {}
 
     def approve_membership(self, account: str, group_id: str, members: list[dict]) -> dict:
-        """Approve pending join requests by running signal-cli CLI updateGroup."""
-        if not self.cli_config_path:
-            raise SignalCliError(
-                "Approve requires signal_cli.cli_config_path in config. "
-                "Run: python main.py duplicate-signal-cli-config (with daemon stopped), then set cli_config_path in config.yaml."
-            )
-        return self._run_update_group_cli(account, group_id, members, log_prefix="approve_membership")
+        """Approve pending join requests via JSON-RPC updateGroup, same signal-cli process as the daemon."""
+        group_id = (group_id or "").strip()
+        if not group_id:
+            raise SignalCliError("group_id is required for approve.")
+        account_normalized = (account or "").strip()
+        member_ids: List[str] = []
+        for m in members:
+            n = (m.get("number") or "").strip()
+            u = (m.get("uuid") or "").strip()
+            mid = n or u
+            if mid and mid != account_normalized:
+                member_ids.append(mid)
+        if not member_ids:
+            raise SignalCliError("No member uuid/number for approve.")
+        params: dict = {
+            "groupId": group_id,
+            "group_id": group_id,
+            "members": member_ids,
+        }
+        if account:
+            params["account"] = account
+        try:
+            return self._call("updateGroup", params, retries=0) or {}
+        except SignalCliError as e:
+            if not self.try_cli_fallback_for_approve or not self.cli_config_path:
+                raise SignalCliError(
+                    f"updateGroup (daemon) failed: {e}. "
+                    "If the group uses link-based join requests, ensure signal-cli is current. "
+                    "Optional: set try_cli_fallback_for_approve: true and signal_cli.cli_config_path to enable CLI fallback."
+                ) from e
+            logger.warning("approve_membership: JSON-RPC updateGroup failed, using CLI: %s", e)
+            return self._run_update_group_cli(account, group_id, members, log_prefix="approve_membership")
 
     def deny_membership(self, account: str, group_id: str, members: list[dict]) -> dict:
         """Deny pending join requests. Uses daemon updateGroup (avoids CLI second-process SQLite conflict on Windows).
@@ -581,31 +596,56 @@ class SignalCliClient:
             raise
 
     def add_members_to_group(self, account: str, group_id: str, members: list[dict]) -> dict:
-        """Add members to an existing group via signal-cli CLI. One call per member; delay between adds."""
+        """Add members to an existing group via JSON-RPC updateGroup; optional CLI fallbacks (see try_cli_fallback_for_approve)."""
         logger.info("add_members_to_group: called with group_id=%s", group_id)
-        if not self.cli_config_path:
-            raise SignalCliError(
-                "Adding to second group requires signal_cli.cli_config_path in config. "
-                "Run: python main.py duplicate-signal-cli-config (with daemon stopped), then set cli_config_path in config.yaml."
-            )
-        if not self._cli_has_group(account, group_id):
-            raise SignalCliError(
-                "Duplicate config does not contain this group. Re-run: python main.py duplicate-signal-cli-config (with daemon stopped), then try again."
-            )
-        delay_seconds = 2
-        retry_delay_seconds = 5
-        for i, m in enumerate(members):
-            try:
-                self._run_update_group_cli(account, group_id, [m], log_prefix="add_members_to_group")
-            except SignalCliError as e:
-                logger.warning("add_members_to_group: failed for member %d/%d, retrying once in %ds: %s", i + 1, len(members), retry_delay_seconds, e)
-                time.sleep(retry_delay_seconds)
-                self._run_update_group_cli(account, group_id, [m], log_prefix="add_members_to_group")
-            if (i + 1) % 10 == 0 or i + 1 == len(members):
-                logger.info("add_members_to_group: added %d/%d", i + 1, len(members))
-            if i + 1 < len(members):
-                time.sleep(delay_seconds)
-        return {}
+        group_id = (group_id or "").strip()
+        if not group_id:
+            raise SignalCliError("group_id is required for add to group.")
+        account_normalized = (account or "").strip()
+        member_ids: List[str] = []
+        for m in members:
+            n = (m.get("number") or "").strip()
+            u = (m.get("uuid") or "").strip()
+            mid = n or u
+            if mid and mid != account_normalized:
+                member_ids.append(mid)
+        if not member_ids:
+            raise SignalCliError("No member uuid/number for add to group.")
+        params: dict = {
+            "groupId": group_id,
+            "group_id": group_id,
+            "members": member_ids,
+        }
+        if account:
+            params["account"] = account
+        try:
+            return self._call("updateGroup", params, retries=0) or {}
+        except SignalCliError as e:
+            if not self.try_cli_fallback_for_approve or not self.cli_config_path:
+                raise SignalCliError(
+                    f"updateGroup (daemon) failed: {e}. "
+                    "Ensure your account is an admin of the target group. "
+                    "Optional: set try_cli_fallback_for_approve: true and signal_cli.cli_config_path to enable CLI fallback."
+                ) from e
+            if not self._cli_has_group(account, group_id):
+                raise SignalCliError(
+                    "Duplicate config does not contain this group. Re-run: python main.py duplicate-signal-cli-config (with daemon stopped), then try again."
+                )
+            logger.warning("add_members_to_group: JSON-RPC updateGroup failed, using CLI: %s", e)
+            delay_seconds = 2
+            retry_delay_seconds = 5
+            for i, m in enumerate(members):
+                try:
+                    self._run_update_group_cli(account, group_id, [m], log_prefix="add_members_to_group")
+                except SignalCliError as e2:
+                    logger.warning("add_members_to_group: failed for member %d/%d, retrying once in %ds: %s", i + 1, len(members), retry_delay_seconds, e2)
+                    time.sleep(retry_delay_seconds)
+                    self._run_update_group_cli(account, group_id, [m], log_prefix="add_members_to_group")
+                if (i + 1) % 10 == 0 or i + 1 == len(members):
+                    logger.info("add_members_to_group: added %d/%d", i + 1, len(members))
+                if i + 1 < len(members):
+                    time.sleep(delay_seconds)
+            return {}
 
     def list_contacts(self, all_recipients: bool = True) -> list[dict]:
         """Return list of contacts (for name lookup). all_recipients=True includes UUID-only recipients. Empty list on error or unsupported."""

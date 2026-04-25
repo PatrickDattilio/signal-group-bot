@@ -231,8 +231,16 @@ fun Application.installRoutes(context: WebAppContext) {
             try {
                 withContext(Dispatchers.IO) { client.approveMembership(cfg.account, cfg.groupId, listOf(member)) }
             } catch (e: SignalCliException) {
+                logger.error(e) { "POST /api/approve failed: ${e.message}" }
                 errors += "Approve: ${e.message}"
                 call.respond(HttpStatusCode.InternalServerError, jsonError(errors.joinToString("; ")))
+                return@post
+            } catch (e: Exception) {
+                logger.error(e) { "POST /api/approve failed (unexpected)" }
+                call.respond(
+                    HttpStatusCode.InternalServerError,
+                    jsonError(e.message ?: e.javaClass.simpleName),
+                )
                 return@post
             }
             for ((i, gid) in addToGroupIds.withIndex()) {
