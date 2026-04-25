@@ -187,6 +187,7 @@ fun Application.installRoutes(context: WebAppContext) {
                 call.respond(HttpStatusCode.InternalServerError, jsonError(e.message ?: "error"))
                 return@post
             }
+            context.store.markMessaged(member)
             call.respond(buildJsonObject {
                 put("ok", true)
                 put("welcome_sent", true)

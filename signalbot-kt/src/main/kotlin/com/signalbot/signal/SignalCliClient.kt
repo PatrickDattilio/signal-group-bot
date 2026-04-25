@@ -102,6 +102,12 @@ class SignalCliClient(
         return line
     }
 
+    /** When true, full JSON-RPC response line is logged at INFO (else DEBUG). Env: SIGNALBOT_LOG_RPC_RAW=1|true|yes|on */
+    private fun isLogRpcRawEnabled(): Boolean {
+        val v = System.getenv("SIGNALBOT_LOG_RPC_RAW")?.trim()?.lowercase() ?: return false
+        return v in setOf("1", "true", "yes", "on")
+    }
+
     /** Send JSON-RPC 2.0 request; returns the 'result' field. Throws SignalCliException on error. */
     fun call(method: String, params: JsonObject = buildJsonObject {}, retries: Int = maxRetries): JsonElement? {
         val reqId = nextId()
@@ -124,9 +130,22 @@ class SignalCliClient(
                 parsed["error"]?.let { errEl ->
                     val errObj = errEl.jsonObject
                     val msg = errObj["message"]?.jsonPrimitive?.contentOrNull ?: errObj.toString()
+                    if (method == "send" || method == "sendMessage") {
+                        logger.warn { "JSON-RPC $method error: $msg (full: $errObj)" }
+                    }
                     throw SignalCliException(msg, errObj.mapValues { it.value })
                 }
-                return parsed["result"]
+                val rpcResult = parsed["result"]
+                if (method == "send" || method == "sendMessage") {
+                    logger.info { "JSON-RPC $method result: $rpcResult" }
+                    val raw = line.take(4096)
+                    if (isLogRpcRawEnabled()) {
+                        logger.info { "JSON-RPC $method raw: $raw" }
+                    } else {
+                        logger.debug { "JSON-RPC $method raw: $raw" }
+                    }
+                }
+                return rpcResult
             } catch (e: SignalCliConnectionException) {
                 lastError = e
                 if (attempt < retries) {
@@ -333,22 +352,55 @@ class SignalCliClient(
         }
     }
 
+    /**
+     * Sends a 1:1 message via JSON-RPC. Tries the `send` method with params shapes
+     * that signal-cli accepts (string vs array for [recipient] — some versions differ).
+     * Does not use group send; recipient must be phone or UUID (ACI) per [Member].
+     */
     fun sendMessage(account: String, recipient: Member, body: String): JsonElement? {
-        val rid = recipient.number.ifBlank { recipient.uuid }
-        val recipientArr = if (rid.isBlank()) JsonArray(emptyList()) else JsonArray(listOf(JsonPrimitive(rid)))
-        val params = buildJsonObject {
-            put("recipient", recipientArr)
+        val rid = recipient.number.ifBlank { recipient.uuid }.trim()
+        if (rid.isEmpty()) {
+            throw SignalCliException("sendMessage: recipient must have a phone number or uuid")
+        }
+        if (body.isBlank()) {
+            throw SignalCliException("sendMessage: message body is empty")
+        }
+        val acct = account.trim()
+        fun baseParams(recipientValue: JsonElement) = buildJsonObject {
             put("message", body)
+            put("recipient", recipientValue)
+            if (acct.isNotEmpty()) put("account", acct)
         }
-        var result = try {
-            call("send", params)
+        val asString = baseParams(JsonPrimitive(rid))
+        val asArray = baseParams(JsonArray(listOf(JsonPrimitive(rid))))
+        var last: SignalCliException? = null
+        for ((label, params) in listOf("recipient (string)" to asString, "recipient (array)" to asArray)) {
+            try {
+                val result = call("send", params, retries = 0)
+                if (result == null || result is JsonNull) {
+                    logger.warn { "sendMessage: send returned null ($label), trying next shape" }
+                    last = SignalCliException("send returned no result (signal-cli may have rejected the send)")
+                    continue
+                }
+                logger.info { "sendMessage: success using $label (see JSON-RPC send result above)" }
+                return result
+            } catch (e: SignalCliException) {
+                last = e
+                logger.warn { "sendMessage: send failed ($label): ${e.message}" }
+            }
+        }
+        // Older examples / some builds used this alias; try once before failing
+        try {
+            val r = call("sendMessage", asArray, retries = 0)
+            if (r != null && r !is JsonNull) {
+                logger.info { "sendMessage: success using sendMessage alias (see JSON-RPC result above)" }
+                return r
+            }
         } catch (e: SignalCliException) {
-            null
+            last = e
         }
-        if (result == null) {
-            result = call("sendMessage", params)
-        }
-        return result
+        throw last
+            ?: SignalCliException("sendMessage: all attempts to call signal-cli send failed")
     }
 
     fun approveMembership(account: String, groupId: String, members: List<Member>): JsonElement? {

@@ -130,9 +130,19 @@ class SignalCliClient:
                     err = out["error"]
                     code = err.get("code", -1)
                     msg_err = err.get("message", str(err))
+                    if method in ("send", "sendMessage"):
+                        logger.warning("JSON-RPC %s error: %s (full: %s)", method, msg_err, err)
                     raise SignalCliError(msg_err, err)
 
-                return out.get("result")
+                result = out.get("result")
+                if method in ("send", "sendMessage"):
+                    logger.info("JSON-RPC %s result: %s", method, result)
+                    raw = line[:4096] if len(line) > 4096 else line
+                    if (os.environ.get("SIGNALBOT_LOG_RPC_RAW") or "").strip().lower() in ("1", "true", "yes", "on"):
+                        logger.info("JSON-RPC %s raw: %s", method, raw)
+                    else:
+                        logger.debug("JSON-RPC %s raw: %s", method, raw)
+                return result
 
             except (socket.error, socket.timeout, OSError) as e:
                 last_error = SignalCliConnectionError(f"Connection error: {e}")
@@ -309,22 +319,46 @@ class SignalCliClient:
         return {}
 
     def send_message(self, account: str, recipient_address: dict, message_body: str) -> dict:
-        """Send a direct message via the signal-cli daemon (JSON-RPC)."""
+        """Send a direct message via the signal-cli daemon (JSON-RPC). Tries `recipient` as
+        string and as a one-element list — some signal-cli / argparse paths accept only one form."""
         number = (recipient_address.get("number") or "").strip()
         uuid_val = (recipient_address.get("uuid") or "").strip()
-        recipient = number or uuid_val or ""
-        if not isinstance(recipient, list):
-            recipient = [recipient] if recipient else []
-        result = self._call("send", {
-            "recipient": recipient,
-            "message": message_body,
-        })
-        if result is None:
-            result = self._call("sendMessage", {
-                "recipient": recipient,
-                "message": message_body,
-            })
-        return result or {}
+        rid = number or uuid_val
+        if not rid:
+            raise SignalCliError("send_message: recipient must have a phone number or uuid")
+        if not (message_body or "").strip():
+            raise SignalCliError("send_message: message body is empty")
+        acct = (account or "").strip()
+        last_err: Optional[Exception] = None
+        for label, rfield in [
+            ("recipient (string)", rid),
+            ("recipient (list)", [rid]),
+        ]:
+            params: dict = {"message": message_body, "recipient": rfield}
+            if acct:
+                params["account"] = acct
+            try:
+                result = self._call("send", params, retries=0)
+                if result is not None:
+                    logger.info("send_message: success using %s (see JSON-RPC send result line above)", label)
+                    return result if isinstance(result, dict) else {}
+            except SignalCliError as e:
+                last_err = e
+                logger.warning("send_message: send failed (%s): %s", label, e)
+        try:
+            r2 = self._call(
+                "sendMessage",
+                {"message": message_body, "recipient": [rid], **({"account": acct} if acct else {})},
+                retries=0,
+            )
+            if r2 is not None:
+                logger.info("send_message: success using sendMessage alias (see JSON-RPC result above)")
+                return r2 if isinstance(r2, dict) else {}
+        except SignalCliError as e:
+            last_err = e
+        if last_err:
+            raise last_err
+        raise SignalCliError("send_message: all send attempts failed")
 
     def _resolve_cli_exe(self, exe: str) -> str:
         """On Windows, prefer .exe over .CMD shim."""

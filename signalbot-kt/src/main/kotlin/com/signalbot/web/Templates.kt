@@ -35,6 +35,7 @@ object Templates {
     .message { margin-bottom: 1rem; padding: 0.75rem; border-radius: 6px; }
     .message.info { background: #0f3460; }
     .message.error { background: #5c1010; }
+    .message.success { background: #1b4332; color: #e8f5e9; }
   </style>
 </head>
 <body>
@@ -48,6 +49,7 @@ object Templates {
     <button type="button" id="refresh">Refresh list</button>
   </div>
   <div id="error" class="error" style="display:none;"></div>
+  <p id="success" class="message success" style="display:none;"></p>
   <div id="debug-wrap"></div>
   <table>
     <thead>
@@ -67,14 +69,33 @@ object Templates {
   <script>
     const tbody = document.getElementById('tbody');
     const errEl = document.getElementById('error');
+    const successEl = document.getElementById('success');
+    var successTimer = null;
 
     function showError(msg) {
       errEl.textContent = msg;
       errEl.style.display = msg ? 'block' : 'none';
     }
 
+    function showSuccess(msg) {
+      if (successTimer) { clearTimeout(successTimer); successTimer = null; }
+      if (!msg) {
+        successEl.textContent = '';
+        successEl.style.display = 'none';
+        return;
+      }
+      successEl.textContent = msg;
+      successEl.style.display = 'block';
+      successTimer = setTimeout(function() {
+        successEl.style.display = 'none';
+        successEl.textContent = '';
+        successTimer = null;
+      }, 5000);
+    }
+
     function load() {
       showError('');
+      showSuccess('');
       const debugWrap = document.getElementById('debug-wrap');
       if (debugWrap) debugWrap.innerHTML = '';
       tbody.innerHTML = '<tr><td colspan="5">Loading…</td></tr>';
@@ -154,7 +175,15 @@ object Templates {
           tbody.querySelectorAll('.welcome-btn').forEach(btn => {
             btn.addEventListener('click', function() {
               const row = this.closest('tr');
-              postMember('/api/send-welcome', { uuid: row.dataset.uuid, number: row.dataset.number }, this);
+              postMember('/api/send-welcome', { uuid: row.dataset.uuid, number: row.dataset.number }, this, function() {
+                const st = row.querySelector('.status');
+                if (st) { st.className = 'status messaged'; st.textContent = 'Messaged'; }
+                const tds = row.querySelectorAll('td');
+                if (tds.length >= 4) {
+                  tds[3].textContent = new Date().toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' });
+                }
+                showSuccess('Welcome / rules message sent. They should receive a DM on Signal.');
+              });
             });
           });
           tbody.querySelectorAll('.approve-btn').forEach(btn => {
