@@ -1,7 +1,12 @@
 # Python → Kotlin cutover checklist
 
-This document describes how to move an existing production SignalBot install
-from the Python implementation (root of this repo) to the Kotlin port
+> **Note:** The legacy Python implementation has been **removed** from this repository.
+> This file is kept as a **historical** migration guide if you still have old notes or
+> branches that referenced the Python bot. New deployments should use **Kotlin only**
+> (see the root `README.md`).
+
+This document described how to move an existing production SignalBot install
+from the Python implementation to the Kotlin port
 ([`signalbot-kt/`](signalbot-kt/)) with **zero message loss** and a clean
 rollback path. The wire behaviour (config schema, JSON API, UI, signal-cli
 integration) is identical; only the persistence format changes
@@ -87,18 +92,6 @@ Keep `messaged.json` / `metrics.json` on disk for **at least one week** as a
 rollback artefact. If anything misbehaves you can always re-point the Python
 bot at those files.
 
-## 6. Remove Python sources (after validation)
+## 6. Python sources
 
-Once you've run on Kotlin for a week without issues and are happy:
-
-```bash
-git rm -r main.py web_ui.py wsgi.py src/ tests/ requirements.txt
-git rm config.example.yaml     # duplicated under signalbot-kt/src/main/resources/
-git commit -m "Drop Python sources after Kotlin cutover"
-```
-
-(Leave `messaged.json` / `metrics.json` behind on disk; the Kotlin build
-ignores them.) Keep `SIGNAL_CLI_SETUP.md`, `DEPLOY_CLOUD.md`, `QUICKSTART.md`,
-and the `README.md` — they describe concerns (signal-cli setup, PaaS config)
-that are still relevant. Update any step that references `python main.py …`
-to `java -jar signalbot.jar …`.
+The Python implementation has been removed from the repository. Use `java -jar signalbot.jar …` (see `README.md`). Keep `messaged.json` / `metrics.json` on disk if you still need them for `migrate-json`; otherwise rely on SQLite only.

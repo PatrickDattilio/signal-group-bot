@@ -15,7 +15,7 @@ data class AdminSession(val username: String, val authenticated: Boolean = true)
 
 /**
  * Login rate limiting, bcrypt (and Werkzeug pbkdf2) hash verification, IP extraction.
- * Mirrors the auth helpers in web_ui.py.
+ * Session + bcrypt/SCrypt password verification for the admin UI.
  */
 object Auth {
     val loginWindowSeconds: Int = (System.getenv("SIGNALBOT_LOGIN_WINDOW_SECONDS") ?: "900").toInt()

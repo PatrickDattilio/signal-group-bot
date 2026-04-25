@@ -2,6 +2,12 @@
 
 All notable changes to SignalBot will be documented in this file.
 
+## [Unreleased]
+
+### Removed
+
+- **Python implementation** (`main.py`, `web_ui.py`, `wsgi.py`, `src/`, `tests/`, `requirements.txt`, etc.). The supported application is the Kotlin build under `signalbot-kt/`. GitHub Actions now runs `gradle test` and a Docker image sanity check only.
+
 ## [2.0.0] - 2026-01-31
 
 ### Added

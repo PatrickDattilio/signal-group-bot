@@ -12,14 +12,10 @@ The CLI will block until the daemon is stopped.
 
 **Important:** The copy is a snapshot. If the CLI runs with a copy that doesn’t have the same groups as the daemon (e.g. you joined groups after copying), `updateGroup -g <id>` can **create a new group** instead of updating the real one. So create the copy **with the daemon stopped** so the copy is complete, and **re-run the copy** if you join new groups later.
 
-1. **Create a copy of the config** (run with daemon stopped so the copy is complete and has the same groups):
-   ```bash
-   python main.py duplicate-signal-cli-config
-   ```
-   This copies the default signal-cli data dir (e.g. `%APPDATA%\signal-cli` on Windows) to a second path (e.g. `%APPDATA%\signal-cli-cli`). Optional: `python main.py duplicate-signal-cli-config <dest>` or `python main.py duplicate-signal-cli-config <source> <dest>`.
+1. **Create a copy of the config** (run with daemon stopped so the copy is complete and has the same groups). Copy the whole data directory, e.g. on Windows from `%APPDATA%\signal-cli` to `%APPDATA%\signal-cli-cli` (PowerShell: `Copy-Item -Recurse` after stopping the daemon).
 
 2. **In config.yaml** under `signal_cli` set:
-   - `cli_config_path: "<path-to-the-copy>"` (the path printed by the command)
+   - `cli_config_path: "<path-to-the-copy>"` (the duplicate directory you created)
 
 Approve in the Web UI uses the CLI with this copy; no other option is needed.
 
@@ -41,4 +37,4 @@ In **cmd.exe**, you can paste the command from the log as-is (no `&`).
 
 # Troubleshooting
 
-**"Duplicate config does not contain this group"** — The CLI (using the duplicate config) does not see the main or second group. Re-run `python main.py duplicate-signal-cli-config` **with the daemon stopped** so the copy includes all groups (main and second), then try again.
+**"Duplicate config does not contain this group"** — The CLI (using the duplicate config) does not see the main or second group. Recopy the signal-cli data directory **with the daemon stopped** so the copy includes all groups (main and second), then try again.

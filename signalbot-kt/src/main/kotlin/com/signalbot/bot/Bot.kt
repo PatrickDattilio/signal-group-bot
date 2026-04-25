@@ -17,7 +17,7 @@ import kotlin.coroutines.coroutineContext
 private val logger = KotlinLogging.logger {}
 
 /**
- * Bot polling loop. Mirrors src/bot.py:run_bot but uses coroutines instead of time.sleep.
+ * Bot polling loop (coroutine-based delay between polls).
  */
 suspend fun runBot(
     config: Config,

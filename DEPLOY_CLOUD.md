@@ -668,10 +668,8 @@ docker run --rm -p 5000:5000 -v "$PWD/data:/data" \
 
 ## 16. Related docs
 
-- [`CUTOVER.md`](CUTOVER.md) — moving an existing Python install to the
-  Kotlin port without losing state.
-- [`QUICKSTART.md`](QUICKSTART.md) — local developer setup (unit tests, dry
-  run, validate).
+- [`CUTOVER.md`](CUTOVER.md) — historical Python → Kotlin migration notes.
+- [`README.md`](README.md) — build, run, and test the Kotlin app.
 - [`SIGNAL_CLI_SETUP.md`](SIGNAL_CLI_SETUP.md) — deeper signal-cli linking
   notes (Windows specifics, troubleshooting).
 - [`signalbot-kt/src/main/resources/config.example.yaml`](signalbot-kt/src/main/resources/config.example.yaml)

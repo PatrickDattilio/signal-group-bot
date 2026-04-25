@@ -8,82 +8,29 @@ on:
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.10', '3.11', '3.12']
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest pytest-cov
-    
-    - name: Run tests
-      run: |
-        python run_tests.py
-    
-    - name: Run tests with pytest (with coverage)
-      run: |
-        pytest tests/ -v --cov=src --cov-report=xml --cov-report=term
-    
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-${{ matrix.os }}-py${{ matrix.python-version }}
-
-  lint:
     runs-on: ubuntu-latest
-    
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install flake8 black mypy
-    
-    - name: Lint with flake8
-      run: |
-        # Stop the build if there are Python syntax errors or undefined names
-        flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
-        # Exit-zero treats all errors as warnings
-        flake8 src tests --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
-    
-    - name: Check formatting with black
-      run: |
-        black --check src tests main.py
-    
-    - name: Type check with mypy
-      run: |
-        mypy src --ignore-missing-imports || true
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Gradle test
+        working-directory: signalbot-kt
+        run: |
+          chmod +x gradlew
+          ./gradlew test --no-daemon
 
   docker:
     runs-on: ubuntu-latest
-    
     steps:
-    - uses: actions/checkout@v3
-    
-    - name: Build Docker image
-      run: |
-        docker build -t signalbot:test .
-    
-    - name: Test Docker image
-      run: |
-        docker run --rm signalbot:test python -c "import src.bot; import src.signald_client; import src.store; import src.metrics; import src.template; import src.filters; print('All imports successful')"
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t signalbot:test .
+
+      - name: Verify image contents
+        run: |
+          docker run --rm signalbot:test sh -c 'test -f /app/signalbot.jar && test -x /app/entrypoint.sh && test -f /usr/local/bin/signal-cli'

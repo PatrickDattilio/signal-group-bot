@@ -97,7 +97,7 @@ Environment variable override:
 
 ```powershell
 $env:SIGNAL_CLI_SOCKET = "localhost:7583"
-python main.py list-pending
+java -jar signalbot.jar list-requesting
 ```
 
 ---
@@ -107,18 +107,18 @@ python main.py list-pending
 With the daemon running and config set:
 
 ```powershell
-python main.py debug-group
+java -jar signalbot.jar debug-group
 ```
 
-That prints the raw group object. Use the `id` field (base64) as `group_id` in config. You can also call signal-cli’s `listGroups` (e.g. via a small script or the JSON-RPC doc) and take the group `id` from there.
+That prints the raw group object. Use the `id` field (base64) as `group_id` in config. You can also run `java -jar signalbot.jar list-groups` and take the group `id` from there.
 
 ---
 
 ## 6. Run the bot
 
 ```powershell
-python main.py list-pending   # list users requesting to join
-python main.py                # run the bot
+java -jar signalbot.jar list-requesting   # list users requesting to join
+java -jar signalbot.jar run               # run the bot (+ UI; use --headless to skip UI)
 ```
 
 ---
@@ -140,4 +140,4 @@ python main.py                # run the bot
 1. Install signal-cli and **link** your number: `signal-cli -u +NUMBER link`
 2. Start the daemon in **socket** mode: `signal-cli -u +NUMBER daemon --socket`
 3. On Windows, expose TCP (daemon `--tcp` or socat in WSL) and set `signal_cli.socket_path: "localhost:7583"`
-4. Set `account` and `group_id` in `config.yaml`, then run `python main.py list-pending` or `python main.py`
+4. Set `account` and `group_id` in `config.yaml`, then run `java -jar signalbot.jar list-requesting` or `java -jar signalbot.jar run`

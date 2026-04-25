@@ -14,7 +14,7 @@ signal_cli:
 # The Signal account (admin of the group). E.164 format, e.g. +12025551234
 account: "+1234567890"
 
-# Main group's ID (base64). This is the group where join requests appear; Approve adds the member here first. Get via: python main.py list-groups
+# Main group's ID (base64). This is the group where join requests appear; Approve adds the member here first. Get via: signalbot list-groups
 group_id: "YOUR_GROUP_ID_BASE64"
 
 # Message sent to each user when they appear in the pending queue.
@@ -37,7 +37,7 @@ message: |
 #   We're still reviewing your request. You'll hear from us soon.
 #   Last check: {{datetime}}
 
-# Optional: when using the Web UI, after approving in the main group, the member is also added to these groups (base64 IDs). Run python main.py list-groups to see IDs and names.
+# Optional: when using the Web UI, after approving in the main group, the member is also added to these groups (base64 IDs). Run signalbot list-groups to see IDs and names.
 # approve_add_to_group_id: "SECOND_GROUP_ID_BASE64"
 # approve_add_to_group_id_2: "THIRD_GROUP_ID_BASE64"
 
