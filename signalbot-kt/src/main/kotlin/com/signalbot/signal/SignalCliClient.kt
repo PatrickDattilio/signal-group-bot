@@ -238,6 +238,42 @@ class SignalCliClient(
     }
 
     /**
+     * Force signal-cli to pull the latest group state (including profile
+     * keys for requesting members) from the Signal server.
+     *
+     * Per signal-cli 0.13.19+ behavior, `listGroups -g GROUP_ID` triggers a
+     * server-side refresh of that one group's state. This is the documented
+     * fix for the long-standing "linked device can't see requesting members'
+     * names" problem (issue #1802) - your account doesn't get profile keys
+     * for users who requested to join *before* you were added as admin
+     * unless you explicitly refresh.
+     *
+     * Returns true if the call succeeded.
+     */
+    fun refreshGroupState(groupId: String): Boolean {
+        if (groupId.isBlank()) return false
+        val gid = groupId.trim()
+        // Try both param shapes - older signal-cli versions used groupIds,
+        // newer ones accept either groupId (single) or an array.
+        val attempts = listOf(
+            buildJsonObject { put("groupId", gid) },
+            buildJsonObject { put("groupId", JsonArray(listOf(JsonPrimitive(gid)))) },
+            buildJsonObject { put("group-id", gid) },
+        )
+        for (params in attempts) {
+            try {
+                call("listGroups", params, retries = 0)
+                return true
+            } catch (_: SignalCliException) {
+                continue
+            } catch (_: SignalCliConnectionException) {
+                return false
+            }
+        }
+        return false
+    }
+
+    /**
      * Returns the raw `requestingMembers` / `pendingMembers` JSON arrays from
      * the group object. Useful when you need to inspect fields that aren't
      * part of [Member] - e.g. to find where signal-cli stashes the profile
@@ -540,9 +576,20 @@ class SignalCliClient(
         account: String,
         members: List<Member>,
         returnDebug: Boolean = false,
+        refreshGroupId: String? = null,
     ): NamesResult {
         val debug = if (returnDebug) mutableMapOf<String, Any?>() else null
         val nameById = mutableMapOf<String, String>()
+
+        // Pre-pass: refresh the group state from the server so that
+        // requesting-members' profile keys are pulled into our local store.
+        // Without this, listContacts can never decrypt their profiles - we
+        // get the encrypted blob back but no key to unlock it. See
+        // signal-cli issue #1802 (fixed in 0.13.19+).
+        if (!refreshGroupId.isNullOrBlank()) {
+            val ok = refreshGroupState(refreshGroupId)
+            if (debug != null) debug["group_state_refreshed"] = ok
+        }
 
         fun indexContact(c: JsonObject) {
             val name = nameFromContact(c) ?: return

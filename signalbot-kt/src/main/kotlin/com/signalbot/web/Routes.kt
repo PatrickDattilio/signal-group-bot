@@ -123,7 +123,12 @@ fun Application.installRoutes(context: WebAppContext) {
                 getGroupNamesForConfig(client, cfg.groupId, addToGroupIds)
             }
             val namesResult = withContext(Dispatchers.IO) {
-                client.getRecipientNames(cfg.account, members, returnDebug = debug)
+                client.getRecipientNames(
+                    cfg.account,
+                    members,
+                    returnDebug = debug,
+                    refreshGroupId = cfg.groupId,
+                )
             }
             val requesting = members.mapIndexed { i, m ->
                 val ts = context.store.getMessagedAt(m)
