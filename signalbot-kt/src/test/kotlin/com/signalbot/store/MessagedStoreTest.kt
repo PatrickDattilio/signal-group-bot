@@ -80,6 +80,18 @@ class MessagedStoreTest {
     }
 
     @Test
+    fun `markVettingSent refreshes vetting_sent_at for repeated intro cooldown`() {
+        val store = MessagedStore()
+        val member = Member(uuid = "refresh-cooldown-test")
+        val stale = 1_000.0
+        store.importAll(mapOf("uuid:refresh-cooldown-test" to stale))
+        assertEquals(stale, store.getRow(member)?.vettingSentAt)
+        val now = System.currentTimeMillis() / 1000.0
+        store.markVettingSent(member, timestamp = now)
+        assertEquals(now, store.getRow(member)?.vettingSentAt)
+    }
+
+    @Test
     fun `vetting cooldown merges legacy uuid casing row`() {
         val store = MessagedStore()
         val now = System.currentTimeMillis() / 1000.0

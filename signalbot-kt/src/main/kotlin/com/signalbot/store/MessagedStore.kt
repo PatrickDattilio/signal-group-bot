@@ -64,22 +64,29 @@ class MessagedStore {
         }
     }
 
+    /**
+     * Record a successful vetting **intro** DM (primary template from the polling bot).
+     * Always stores [timestamp] as [IntakeRow.vettingSentAt] so [isWithinVettingCooldown] measures time since the
+     * **last** intro. (Older behavior kept the first timestamp forever, so once cooldown expired relative to that
+     * stale value the bot resent intro every poll while the member stayed pending.)
+     */
     fun markVettingSent(member: Member, timestamp: Double = System.currentTimeMillis() / 1000.0) {
         val canonical = member.key()
         transaction {
             val cur = mergeMemberRows(member)
-            val v = cur.vettingSentAt ?: timestamp
-            upsertRow(withLast(cur.copy(vettingSentAt = v)))
+            upsertRow(withLast(cur.copy(vettingSentAt = timestamp)))
             deleteStaleMemberKeys(member, canonical)
         }
     }
 
+    /**
+     * Record a successful vetting **follow-up** DM. Uses [timestamp] each time so cooldown tracks last follow-up too.
+     */
     fun markVettingFollowupSent(member: Member, timestamp: Double = System.currentTimeMillis() / 1000.0) {
         val canonical = member.key()
         transaction {
             val cur = mergeMemberRows(member)
-            val f = cur.vettingFollowupSentAt ?: timestamp
-            upsertRow(withLast(cur.copy(vettingFollowupSentAt = f)))
+            upsertRow(withLast(cur.copy(vettingFollowupSentAt = timestamp)))
             deleteStaleMemberKeys(member, canonical)
         }
     }
