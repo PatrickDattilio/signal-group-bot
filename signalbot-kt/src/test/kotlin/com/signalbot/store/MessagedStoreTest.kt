@@ -70,6 +70,29 @@ class MessagedStoreTest {
     }
 
     @Test
+    fun `member key lowercases uuid`() {
+        assertEquals("uuid:aa-bb", Member(uuid = "AA-BB").key())
+    }
+
+    @Test
+    fun `member key collapses ascii spaces in number`() {
+        assertEquals("number:+1123", Member(number = " +11 23 ").key())
+    }
+
+    @Test
+    fun `vetting cooldown merges legacy uuid casing row`() {
+        val store = MessagedStore()
+        val now = System.currentTimeMillis() / 1000.0
+        store.importAll(mapOf("uuid:AAAA0000-0000-0000-0000-000000000099" to now))
+        assertTrue(
+            store.isWithinVettingCooldown(
+                Member(uuid = "aaaa0000-0000-0000-0000-000000000099"),
+                cooldownSeconds = 86_400,
+            ),
+        )
+    }
+
+    @Test
     fun `member key falls back to number`() {
         val m = Member(number = "+1")
         assertEquals("number:+1", m.key())

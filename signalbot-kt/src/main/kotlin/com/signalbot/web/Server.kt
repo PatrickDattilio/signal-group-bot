@@ -76,7 +76,7 @@ fun Application.webModule(context: WebAppContext) {
     }
     install(CallLogging)
 
-    val secretKey = (System.getenv("FLASK_SECRET_KEY") ?: System.getenv("SIGNALBOT_SECRET_KEY") ?: "change-this-in-production").toByteArray()
+    val secretKey = (System.getenv("SIGNALBOT_SECRET_KEY") ?: "change-this-in-production").toByteArray()
     val cookieSecure = (System.getenv("SIGNALBOT_COOKIE_SECURE") ?: "1")
         .trim().lowercase() !in setOf("0", "false", "no")
 

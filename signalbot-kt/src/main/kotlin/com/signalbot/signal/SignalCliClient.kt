@@ -313,8 +313,8 @@ class SignalCliClient(
         return requesting.mapNotNull { addr ->
             val obj = addr as? JsonObject ?: return@mapNotNull null
             Member(
-                uuid = obj["uuid"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                number = obj["number"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                uuid = obj["uuid"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty(),
+                number = obj["number"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty(),
             )
         }
     }

@@ -180,7 +180,7 @@ bulk-paste as `KEY=value` lines.
 
 | Variable | Value | Purpose |
 |---|---|---|
-| `SIGNALBOT_SECRET_KEY` | `openssl rand -hex 32` output | Ktor session cookie signing. `FLASK_SECRET_KEY` is also accepted for legacy parity. |
+| `SIGNALBOT_SECRET_KEY` | `openssl rand -hex 32` output | Ktor session cookie signing. |
 | `SIGNALBOT_ADMIN_USERNAME` | e.g. `admin` | Username for the web UI login |
 | `SIGNALBOT_ADMIN_PASSWORD_HASH` | bcrypt hash — see 5c | Password check |
 | `SIGNALBOT_CONFIG` | `/data/config.yaml` | Path to bot YAML on the volume |
@@ -647,7 +647,7 @@ docker run --rm -p 5000:5000 -v "$PWD/data:/data" \
 |---|---|---|
 | `SIGNALBOT_CONFIG` | `/data/config.yaml` | `ConfigLoader` |
 | `SIGNALBOT_DB` | `/data/signalbot.db` | `ConfigLoader`, `Database` |
-| `SIGNALBOT_SECRET_KEY` / `FLASK_SECRET_KEY` | `change-this-in-production` | Ktor sessions (`Server.kt`) |
+| `SIGNALBOT_SECRET_KEY` | `change-this-in-production` | Ktor sessions (`Server.kt`) |
 | `SIGNALBOT_ADMIN_USERNAME` | *empty* | Login gate (`Routes.kt`) |
 | `SIGNALBOT_ADMIN_PASSWORD_HASH` | *empty* | Login gate |
 | `SIGNALBOT_COOKIE_SECURE` | `1` | Cookie flags |

@@ -6,10 +6,46 @@ data class Member(
     val number: String = "",
     val name: String? = null,
 ) {
-    fun key(): String = when {
-        uuid.isNotBlank() -> "uuid:$uuid"
-        number.isNotBlank() -> "number:$number"
-        else -> "{}"
+    /**
+     * Canonical SQLite primary key fragment. UUIDs are normalized to lowercase trimmed;
+     * numbers have surrounding/inner ASCII spaces removed so " +1 2 " matches "+12".
+     * (signal-cli JSON may change UUID casing between polls; mismatch used to bypass cooldown.)
+     */
+    fun key(): String {
+        val u = uuid.trim()
+        if (u.isNotEmpty()) return "uuid:${u.lowercase()}"
+        val n = number.trim().replace(" ", "")
+        if (n.isNotEmpty()) return "number:$n"
+        return "{}"
+    }
+
+    /**
+     * Possible [messaged.member_key] values from older builds or varying RPC casing before upsert consolidation.
+     */
+    fun memberKeyLookupCandidates(): List<String> =
+        buildList {
+            val canonical = key()
+            add(canonical)
+            val u = uuid.trim()
+            if (u.isNotEmpty()) {
+                val legacyExact = "uuid:$u"
+                if (legacyExact != canonical) add(legacyExact)
+                val upper = "uuid:${u.uppercase()}"
+                if (upper != canonical) add(upper)
+            }
+            val nRaw = number.trim()
+            if (nRaw.isNotEmpty() && u.isEmpty()) {
+                val legacyNum = "number:$nRaw"
+                if (legacyNum != canonical) add(legacyNum)
+            }
+        }.distinct()
+
+    /** In-memory rate limiter bucket identity (aligned with [key] semantics without the prefix). */
+    fun rateLimiterIdentity(): String {
+        val u = uuid.trim()
+        if (u.isNotEmpty()) return u.lowercase()
+        val n = number.trim().replace(" ", "")
+        return if (n.isNotEmpty()) n else ""
     }
 
     fun identifier(): String = uuid.ifBlank { number }

@@ -3,6 +3,8 @@ package com.signalbot.store
 import com.signalbot.signal.Member
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.upsert
@@ -43,12 +45,10 @@ class MessagedStore {
     }
 
     fun getRow(member: Member): IntakeRow? {
-        val key = member.key()
         return transaction {
-            MessagedTable.selectAll()
-                .where { MessagedTable.memberKey eq key }
-                .firstOrNull()
-                ?.toIntakeRow()
+            val rows = member.memberKeyLookupCandidates().mapNotNull { readRow(it) }
+            if (rows.isEmpty()) null
+            else rows.reduce(::mergeIntakeRows).copy(memberKey = member.key())
         }
     }
 
@@ -56,91 +56,101 @@ class MessagedStore {
      * Legacy: set vetting time to [timestamp] (replaces the old single "last_messaged" field behavior).
      */
     fun markMessaged(member: Member, timestamp: Double = System.currentTimeMillis() / 1000.0) {
-        val key = member.key()
+        val canonical = member.key()
         transaction {
-            val cur = readRow(key) ?: emptyRow(key)
+            val cur = mergeMemberRows(member)
             upsertRow(withLast(cur.copy(vettingSentAt = timestamp)))
+            deleteStaleMemberKeys(member, canonical)
         }
     }
 
     fun markVettingSent(member: Member, timestamp: Double = System.currentTimeMillis() / 1000.0) {
-        val key = member.key()
+        val canonical = member.key()
         transaction {
-            val cur = readRow(key) ?: emptyRow(key)
+            val cur = mergeMemberRows(member)
             val v = cur.vettingSentAt ?: timestamp
             upsertRow(withLast(cur.copy(vettingSentAt = v)))
+            deleteStaleMemberKeys(member, canonical)
         }
     }
 
     fun markVettingFollowupSent(member: Member, timestamp: Double = System.currentTimeMillis() / 1000.0) {
-        val key = member.key()
+        val canonical = member.key()
         transaction {
-            val cur = readRow(key) ?: emptyRow(key)
+            val cur = mergeMemberRows(member)
             val f = cur.vettingFollowupSentAt ?: timestamp
             upsertRow(withLast(cur.copy(vettingFollowupSentAt = f)))
+            deleteStaleMemberKeys(member, canonical)
         }
     }
 
     fun markWelcomeSent(member: Member, timestamp: Double = System.currentTimeMillis() / 1000.0) {
-        val key = member.key()
+        val canonical = member.key()
         transaction {
-            val cur = readRow(key) ?: emptyRow(key)
+            val cur = mergeMemberRows(member)
             val w = maxOf(cur.welcomeSentAt ?: 0.0, timestamp)
             upsertRow(withLast(cur.copy(welcomeSentAt = w)))
+            deleteStaleMemberKeys(member, canonical)
         }
     }
 
     fun markFilterSkipped(member: Member, timestamp: Double = System.currentTimeMillis() / 1000.0) {
-        val key = member.key()
+        val canonical = member.key()
         transaction {
-            val cur = readRow(key) ?: emptyRow(key)
+            val cur = mergeMemberRows(member)
             val f = cur.filterSkippedAt ?: timestamp
             upsertRow(withLast(cur.copy(filterSkippedAt = f)))
+            deleteStaleMemberKeys(member, canonical)
         }
     }
 
     fun clearFilterSkipped(member: Member) {
-        val key = member.key()
+        val canonical = member.key()
         transaction {
-            val cur = readRow(key) ?: return@transaction
+            val cur = mergeMemberRows(member)
             if (cur.filterSkippedAt == null) return@transaction
             upsertRow(withLast(cur.copy(filterSkippedAt = null)))
+            deleteStaleMemberKeys(member, canonical)
         }
     }
 
     fun markDenied(member: Member, timestamp: Double = System.currentTimeMillis() / 1000.0) {
-        val key = member.key()
+        val canonical = member.key()
         transaction {
-            val cur = readRow(key) ?: emptyRow(key)
+            val cur = mergeMemberRows(member)
             val d = cur.deniedAt ?: timestamp
             upsertRow(withLast(cur.copy(deniedAt = d)))
+            deleteStaleMemberKeys(member, canonical)
         }
     }
 
     fun markApprovedMain(member: Member, timestamp: Double = System.currentTimeMillis() / 1000.0) {
-        val key = member.key()
+        val canonical = member.key()
         transaction {
-            val cur = readRow(key) ?: emptyRow(key)
+            val cur = mergeMemberRows(member)
             val a = cur.approvedMainAt ?: timestamp
             upsertRow(withLast(cur.copy(approvedMainAt = a)))
+            deleteStaleMemberKeys(member, canonical)
         }
     }
 
     fun markExtraGroup1(member: Member, timestamp: Double = System.currentTimeMillis() / 1000.0) {
-        val key = member.key()
+        val canonical = member.key()
         transaction {
-            val cur = readRow(key) ?: emptyRow(key)
+            val cur = mergeMemberRows(member)
             val a = cur.extraGroup1At ?: timestamp
             upsertRow(withLast(cur.copy(extraGroup1At = a)))
+            deleteStaleMemberKeys(member, canonical)
         }
     }
 
     fun markExtraGroup2(member: Member, timestamp: Double = System.currentTimeMillis() / 1000.0) {
-        val key = member.key()
+        val canonical = member.key()
         transaction {
-            val cur = readRow(key) ?: emptyRow(key)
+            val cur = mergeMemberRows(member)
             val a = cur.extraGroup2At ?: timestamp
             upsertRow(withLast(cur.copy(extraGroup2At = a)))
+            deleteStaleMemberKeys(member, canonical)
         }
     }
 
@@ -148,9 +158,9 @@ class MessagedStore {
      * When a member is back in the join queue, clear stale flags from a previous approve/deny cycle.
      */
     fun clearStaleTerminalStateForRequester(member: Member) {
-        val key = member.key()
+        val canonical = member.key()
         transaction {
-            val cur = readRow(key) ?: return@transaction
+            val cur = mergeMemberRows(member)
             if (cur.deniedAt == null && cur.approvedMainAt == null && cur.extraGroup1At == null && cur.extraGroup2At == null) {
                 return@transaction
             }
@@ -161,6 +171,7 @@ class MessagedStore {
                 extraGroup2At = null,
             )
             upsertRow(withLast(cleared))
+            deleteStaleMemberKeys(member, canonical)
         }
     }
 
@@ -194,6 +205,42 @@ class MessagedStore {
 
     private fun readRow(key: String): IntakeRow? =
         MessagedTable.selectAll().where { MessagedTable.memberKey eq key }.firstOrNull()?.toIntakeRow()
+
+    /** Merge duplicate SQLite rows for [member], keyed under canonical [Member.key]. */
+    private fun mergeMemberRows(member: Member): IntakeRow {
+        val canonical = member.key()
+        val rows = member.memberKeyLookupCandidates().mapNotNull { readRow(it) }
+        if (rows.isEmpty()) return emptyRow(canonical)
+        return rows.reduce(::mergeIntakeRows).copy(memberKey = canonical)
+    }
+
+    private fun deleteStaleMemberKeys(member: Member, keepCanonical: String) {
+        val stale = member.memberKeyLookupCandidates().filter { it != keepCanonical }
+        if (stale.isEmpty()) return
+        MessagedTable.deleteWhere { MessagedTable.memberKey inList stale }
+    }
+
+    private fun mergeIntakeRows(a: IntakeRow, b: IntakeRow): IntakeRow =
+        IntakeRow(
+            memberKey = a.memberKey,
+            lastMessagedAt = maxOf(a.lastMessagedAt, b.lastMessagedAt),
+            vettingSentAt = maxOfNullable(a.vettingSentAt, b.vettingSentAt),
+            vettingFollowupSentAt = maxOfNullable(a.vettingFollowupSentAt, b.vettingFollowupSentAt),
+            welcomeSentAt = maxOfNullable(a.welcomeSentAt, b.welcomeSentAt),
+            userRepliedAt = maxOfNullable(a.userRepliedAt, b.userRepliedAt),
+            filterSkippedAt = maxOfNullable(a.filterSkippedAt, b.filterSkippedAt),
+            deniedAt = maxOfNullable(a.deniedAt, b.deniedAt),
+            approvedMainAt = maxOfNullable(a.approvedMainAt, b.approvedMainAt),
+            extraGroup1At = maxOfNullable(a.extraGroup1At, b.extraGroup1At),
+            extraGroup2At = maxOfNullable(a.extraGroup2At, b.extraGroup2At),
+        )
+
+    private fun maxOfNullable(a: Double?, b: Double?): Double? =
+        when {
+            a == null -> b
+            b == null -> a
+            else -> maxOf(a, b)
+        }
 
     private fun emptyRow(key: String) = IntakeRow(
         memberKey = key,

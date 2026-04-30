@@ -68,7 +68,7 @@ class RateLimiter(
     data class Result(val allowed: Boolean, val reason: String)
 
     fun check(member: Member, currentTimeSec: Double = System.currentTimeMillis() / 1000.0): Result {
-        val key = member.uuid.ifBlank { member.number }
+        val key = member.rateLimiterIdentity()
         if (key.isBlank()) return Result(true, "No identifier")
         val list = requests.computeIfAbsent(key) { mutableListOf() }
         synchronized(list) {
