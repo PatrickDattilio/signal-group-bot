@@ -20,8 +20,8 @@ object Database {
             driver = "org.sqlite.JDBC",
         )
         transaction {
-            SchemaUtils.create(MessagedTable, MetricsTable, MetricsErrorsTable)
-            SchemaUtils.createMissingTablesAndColumns(MessagedTable, MetricsTable, MetricsErrorsTable, withLogs = false)
+            SchemaUtils.create(MessagedTable, MetricsTable, MetricsErrorsTable, MassDmHistoryTable)
+            SchemaUtils.createMissingTablesAndColumns(MessagedTable, MetricsTable, MetricsErrorsTable, MassDmHistoryTable, withLogs = false)
             legacyMessagedBackfillIfNeeded()
             MetricsStore.ensureStartTimeInitialized()
         }
@@ -77,4 +77,18 @@ object MetricsErrorsTable : Table("metrics_errors") {
     val errorType = varchar("error_type", 128)
     val count = long("count")
     override val primaryKey = PrimaryKey(errorType)
+}
+
+/** One row per completed mass-DM campaign. */
+object MassDmHistoryTable : Table("mass_dm_history") {
+    val id = varchar("id", 36)
+    val groupId = varchar("group_id", 512)
+    val groupName = varchar("group_name", 256).nullable()
+    val message = text("message")
+    val startedAt = double("started_at")
+    val completedAt = double("completed_at").nullable()
+    val totalMembers = integer("total_members")
+    val sent = integer("sent")
+    val failed = integer("failed")
+    override val primaryKey = PrimaryKey(id)
 }

@@ -235,6 +235,137 @@ fun Application.installRoutes(context: WebAppContext) {
             })
         }
 
+        get("/api/groups") {
+            if (!requireAuthOrJson(call)) return@get
+            val client = context.client()
+            val groups = try {
+                withContext(Dispatchers.IO) { client.listGroups() }
+            } catch (e: SignalCliException) {
+                call.respond(HttpStatusCode.InternalServerError, jsonError(e.message ?: "error"))
+                return@get
+            }
+            val result = groups.mapNotNull { g ->
+                val id = g["id"]?.jsonPrimitive?.contentOrNull ?: g["groupId"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                val name = (g["name"]?.jsonPrimitive?.contentOrNull
+                    ?: g["title"]?.jsonPrimitive?.contentOrNull
+                    ?: g["groupName"]?.jsonPrimitive?.contentOrNull
+                    ?: "").trim().ifEmpty { id }
+                buildJsonObject {
+                    put("id", id)
+                    put("name", name)
+                }
+            }
+            call.respond(buildJsonObject { put("groups", JsonArray(result)) })
+        }
+
+        post("/api/mass-dm/preview") {
+            if (!requireAuthOrJson(call)) return@post
+            val cfg = context.loadConfig()
+            val body = call.receiveText()
+            val root = try { Json.parseToJsonElement(body).jsonObject } catch (_: Exception) {
+                call.respond(HttpStatusCode.BadRequest, jsonError("invalid JSON"))
+                return@post
+            }
+            val groupId = root["group_id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+            if (groupId.isEmpty()) {
+                call.respond(HttpStatusCode.BadRequest, jsonError("group_id required"))
+                return@post
+            }
+            val client = context.client()
+            val members = try {
+                withContext(Dispatchers.IO) { client.listGroupMembers(cfg.account, groupId) }
+            } catch (e: SignalCliException) {
+                call.respond(HttpStatusCode.InternalServerError, jsonError(e.message ?: "error"))
+                return@post
+            }
+            val groups = try { withContext(Dispatchers.IO) { client.listGroups() } } catch (_: SignalCliException) { emptyList() }
+            val groupName = groups.firstOrNull { g ->
+                val gid = g["id"]?.jsonPrimitive?.contentOrNull ?: g["groupId"]?.jsonPrimitive?.contentOrNull ?: return@firstOrNull false
+                client.normalizeGroupId(gid) == client.normalizeGroupId(groupId)
+            }?.let { g ->
+                (g["name"]?.jsonPrimitive?.contentOrNull ?: g["title"]?.jsonPrimitive?.contentOrNull ?: "").trim().ifEmpty { null }
+            }
+            call.respond(buildJsonObject {
+                put("member_count", members.size)
+                put("group_name", groupName ?: groupId)
+            })
+        }
+
+        post("/api/mass-dm/send") {
+            if (!requireAuthOrJson(call)) return@post
+            val cfg = context.loadConfig()
+            val body = call.receiveText()
+            val root = try { Json.parseToJsonElement(body).jsonObject } catch (_: Exception) {
+                call.respond(HttpStatusCode.BadRequest, jsonError("invalid JSON"))
+                return@post
+            }
+            val groupId = root["group_id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+            val message = root["message"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+            if (groupId.isEmpty()) {
+                call.respond(HttpStatusCode.BadRequest, jsonError("group_id required"))
+                return@post
+            }
+            if (message.isEmpty()) {
+                call.respond(HttpStatusCode.BadRequest, jsonError("message required"))
+                return@post
+            }
+            val client = context.client()
+            val members = try {
+                withContext(Dispatchers.IO) { client.listGroupMembers(cfg.account, groupId) }
+            } catch (e: SignalCliException) {
+                call.respond(HttpStatusCode.InternalServerError, jsonError(e.message ?: "error"))
+                return@post
+            }
+            if (members.isEmpty()) {
+                call.respond(HttpStatusCode.BadRequest, jsonError("No members found in that group"))
+                return@post
+            }
+            val groups = try { withContext(Dispatchers.IO) { client.listGroups() } } catch (_: SignalCliException) { emptyList() }
+            val groupName = groups.firstOrNull { g ->
+                val gid = g["id"]?.jsonPrimitive?.contentOrNull ?: g["groupId"]?.jsonPrimitive?.contentOrNull ?: return@firstOrNull false
+                client.normalizeGroupId(gid) == client.normalizeGroupId(groupId)
+            }?.let { g ->
+                (g["name"]?.jsonPrimitive?.contentOrNull ?: g["title"]?.jsonPrimitive?.contentOrNull ?: "").trim().ifEmpty { null }
+            }
+            logger.info { "Mass DM: starting job for group=$groupId (${members.size} members)" }
+            val job = context.massDmStore.startJob(
+                groupId = groupId,
+                groupName = groupName,
+                message = message,
+                members = members,
+                client = client,
+                account = cfg.account,
+            )
+            call.respond(buildJsonObject {
+                put("ok", true)
+                put("job_id", job.id)
+                put("total_members", job.totalMembers)
+            })
+        }
+
+        get("/api/mass-dm/status/{jobId}") {
+            if (!requireAuthOrJson(call)) return@get
+            val jobId = call.parameters["jobId"].orEmpty()
+            val job = context.massDmStore.getJob(jobId)
+            if (job == null) {
+                call.respond(HttpStatusCode.NotFound, jsonError("job not found"))
+                return@get
+            }
+            val sent = job.sent.get()
+            val failed = job.failed.get()
+            val total = job.totalMembers
+            val pct = if (total > 0) (sent + failed) * 100 / total else 0
+            call.respond(buildJsonObject {
+                put("id", job.id)
+                put("status", job.status)
+                put("total_members", total)
+                put("sent", sent)
+                put("failed", failed)
+                put("percent", pct)
+                job.completedAt?.let { put("completed_at", it) }
+            })
+        }
+
         post("/api/approve") {
             if (!requireAuthOrJson(call)) return@post
             val cfg = context.loadConfig()

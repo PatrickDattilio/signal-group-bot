@@ -36,6 +36,14 @@ object Templates {
     .deny-btn:hover { background: #d63d62; }
     .deny-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .actions-cell { white-space: nowrap; }
+    .mass-dm-section { margin-top: 2rem; border-top: 1px solid #2a3a5a; padding-top: 1.5rem; }
+    .mass-dm-section h2 { margin-top: 0; }
+    .mass-dm-label { display: block; margin-bottom: 0.35rem; color: #c7d2fe; font-size: 0.95rem; }
+    .mass-dm-select, .mass-dm-textarea { width: 100%; background: #111827; color: #eef2ff; border: 1px solid #374151; border-radius: 8px; padding: 0.6rem 0.7rem; font-size: 1rem; box-sizing: border-box; }
+    .mass-dm-textarea { resize: vertical; font-family: inherit; }
+    .mass-dm-field { margin-bottom: 0.75rem; }
+    .progress-bar-wrap { background: #0f3460; border-radius: 4px; height: 12px; overflow: hidden; margin: 0.5rem 0; }
+    .progress-bar-fill { height: 100%; background: #4361ee; width: 0%; transition: width 0.3s; }
     .error { color: #ff6b6b; margin-top: 0.5rem; }
     .message { margin-bottom: 1rem; padding: 0.75rem; border-radius: 6px; }
     .message.info { background: #0f3460; }
@@ -70,6 +78,37 @@ object Templates {
       <tr><td colspan="5">Loading…</td></tr>
     </tbody>
   </table>
+
+  <div class="mass-dm-section">
+    <h2>Mass DM</h2>
+    <p class="message info">Send a direct message to every member of a group. Messages are throttled at 500 ms each to avoid Signal rate limits.</p>
+    <div id="mass-dm-form">
+      <div class="mass-dm-field">
+        <label class="mass-dm-label" for="mass-dm-group">Group</label>
+        <select id="mass-dm-group" class="mass-dm-select">
+          <option value="">Loading groups…</option>
+        </select>
+      </div>
+      <div class="mass-dm-field">
+        <label class="mass-dm-label" for="mass-dm-msg">Message</label>
+        <textarea id="mass-dm-msg" class="mass-dm-textarea" rows="4" placeholder="Type your message…"></textarea>
+      </div>
+      <button type="button" id="mass-dm-preview-btn" class="welcome-btn">Preview</button>
+    </div>
+    <div id="mass-dm-preview-step" class="message info" style="display:none;margin-top:1rem;">
+      <p style="margin:0 0 0.4rem;">This will DM <strong id="mass-dm-count">?</strong> members of <strong id="mass-dm-gname">?</strong>.</p>
+      <p style="margin:0 0 0.75rem;color:#aaa;font-size:0.9rem;">Estimated time: <span id="mass-dm-eta">?</span> &middot; 500 ms between each send.</p>
+      <button type="button" id="mass-dm-send-btn" class="approve-btn">Send</button>
+      <button type="button" id="mass-dm-cancel-btn" class="deny-btn" style="margin-left:0.5rem;">Cancel</button>
+    </div>
+    <div id="mass-dm-progress-step" style="display:none;margin-top:1rem;">
+      <div class="message info">
+        <p style="margin:0 0 0.4rem;"><strong id="mass-dm-progress-label">Sending…</strong></p>
+        <div class="progress-bar-wrap"><div id="mass-dm-bar" class="progress-bar-fill"></div></div>
+        <p style="margin:0.4rem 0 0;font-size:0.9rem;" id="mass-dm-progress-detail">0 sent</p>
+      </div>
+    </div>
+  </div>
 
   <script>
     const tbody = document.getElementById('tbody');
@@ -237,6 +276,123 @@ object Templates {
 
     document.getElementById('refresh').addEventListener('click', load);
     load();
+
+    // --- Mass DM ---
+    var massDmJobId = null;
+    var massDmPollTimer = null;
+
+    function massDmEta(count) {
+      var secs = Math.ceil(count * 0.5);
+      if (secs < 60) return secs + 's';
+      return Math.ceil(secs / 60) + ' min';
+    }
+
+    fetch('/api/groups', { cache: 'no-store' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var sel = document.getElementById('mass-dm-group');
+        if (!data.groups || data.error) {
+          sel.innerHTML = '<option value="">Error loading groups</option>';
+          return;
+        }
+        sel.innerHTML = '<option value="">— Select a group —</option>' +
+          data.groups.map(function(g) {
+            return '<option value="' + escapeHtml(g.id) + '">' + escapeHtml(g.name) + '</option>';
+          }).join('');
+      })
+      .catch(function() {
+        document.getElementById('mass-dm-group').innerHTML = '<option value="">Failed to load groups</option>';
+      });
+
+    document.getElementById('mass-dm-preview-btn').addEventListener('click', function() {
+      var groupId = document.getElementById('mass-dm-group').value;
+      var msg = document.getElementById('mass-dm-msg').value.trim();
+      if (!groupId) { showError('Select a group first.'); return; }
+      if (!msg) { showError('Enter a message first.'); return; }
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Loading…';
+      showError('');
+      fetch('/api/mass-dm/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_id: groupId })
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          btn.disabled = false;
+          btn.textContent = 'Preview';
+          if (data.error) { showError(data.error); return; }
+          document.getElementById('mass-dm-count').textContent = data.member_count;
+          document.getElementById('mass-dm-gname').textContent = data.group_name || groupId;
+          document.getElementById('mass-dm-eta').textContent = massDmEta(data.member_count);
+          document.getElementById('mass-dm-preview-step').style.display = 'block';
+        })
+        .catch(function() {
+          btn.disabled = false;
+          btn.textContent = 'Preview';
+          showError('Preview request failed');
+        });
+    });
+
+    document.getElementById('mass-dm-cancel-btn').addEventListener('click', function() {
+      document.getElementById('mass-dm-preview-step').style.display = 'none';
+    });
+
+    document.getElementById('mass-dm-send-btn').addEventListener('click', function() {
+      var groupId = document.getElementById('mass-dm-group').value;
+      var msg = document.getElementById('mass-dm-msg').value.trim();
+      if (!groupId || !msg) { showError('Group and message required.'); return; }
+      var btn = this;
+      btn.disabled = true;
+      showError('');
+      fetch('/api/mass-dm/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_id: groupId, message: msg })
+      })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.error) { showError(data.error); btn.disabled = false; return; }
+          massDmJobId = data.job_id;
+          document.getElementById('mass-dm-preview-step').style.display = 'none';
+          document.getElementById('mass-dm-progress-step').style.display = 'block';
+          document.getElementById('mass-dm-progress-label').textContent = 'Sending…';
+          document.getElementById('mass-dm-bar').style.width = '0%';
+          document.getElementById('mass-dm-progress-detail').textContent = '0 / ' + data.total_members + ' sent';
+          massDmPoll();
+        })
+        .catch(function() {
+          showError('Failed to start mass DM');
+          btn.disabled = false;
+        });
+    });
+
+    function massDmPoll() {
+      if (!massDmJobId) return;
+      fetch('/api/mass-dm/status/' + massDmJobId, { cache: 'no-store' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var total = data.total_members || 0;
+          var sent = data.sent || 0;
+          var failed = data.failed || 0;
+          var pct = data.percent || 0;
+          document.getElementById('mass-dm-bar').style.width = pct + '%';
+          var detail = sent + ' / ' + total + ' sent';
+          if (failed > 0) detail += ', ' + failed + ' failed';
+          document.getElementById('mass-dm-progress-detail').textContent = detail;
+          if (data.status === 'completed') {
+            document.getElementById('mass-dm-progress-label').textContent =
+              'Done! Sent ' + sent + (failed > 0 ? ', ' + failed + ' failed.' : '.');
+            massDmJobId = null;
+          } else {
+            massDmPollTimer = setTimeout(massDmPoll, 2000);
+          }
+        })
+        .catch(function() {
+          massDmPollTimer = setTimeout(massDmPoll, 3000);
+        });
+    }
   </script>
 </body>
 </html>

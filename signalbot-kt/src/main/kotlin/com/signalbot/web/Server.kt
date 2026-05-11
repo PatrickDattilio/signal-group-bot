@@ -3,6 +3,7 @@ package com.signalbot.web
 import com.signalbot.config.Config
 import com.signalbot.config.ConfigLoader
 import com.signalbot.signal.SignalCliClient
+import com.signalbot.store.MassDmStore
 import com.signalbot.store.MessagedStore
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.serialization.kotlinx.json.json
@@ -27,6 +28,7 @@ class WebAppContext(
     val configPath: String,
     val clientFactory: (Config) -> SignalCliClient = { cfg -> SignalCliClient(cfg.signalCli) },
     val store: MessagedStore = MessagedStore(),
+    val massDmStore: MassDmStore = MassDmStore(),
 ) {
     private var cachedClient: SignalCliClient? = null
     private val lock = Any()
