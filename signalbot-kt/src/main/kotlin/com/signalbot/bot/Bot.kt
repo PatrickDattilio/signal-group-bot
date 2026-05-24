@@ -33,6 +33,7 @@ suspend fun runBot(
     val approvalMode = config.approvalMode
     val autoApproveDelay = config.autoApproveDelaySeconds
     val cooldown = config.cooldownSeconds
+    val resendAfterCooldown = config.resendAfterCooldown
     val pollInterval = config.pollIntervalSeconds
 
     val memberFilter = MemberFilter(
@@ -112,6 +113,11 @@ suspend fun runBot(
                         logger.debug { "Skipping member (filter / blocklist): ${member.toAddressMap()}" }
                         continue
                     }
+                }
+
+                if (!resendAfterCooldown && store.hasBeenVetted(member)) {
+                    logger.debug { "Skipping member (resend disabled, already vetted): ${member.toAddressMap()}" }
+                    continue
                 }
 
                 if (store.isWithinVettingCooldown(member, cooldown)) {

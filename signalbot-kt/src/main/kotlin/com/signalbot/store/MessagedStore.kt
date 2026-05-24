@@ -19,6 +19,12 @@ class MessagedStore {
         return (System.currentTimeMillis() / 1000.0 - ref) < cooldownSeconds
     }
 
+    /** Returns true if the member has already received a vetting DM (intro or follow-up). */
+    fun hasBeenVetted(member: Member): Boolean {
+        val row = getRow(member) ?: return false
+        return row.vettingSentAt != null || row.vettingFollowupSentAt != null
+    }
+
     fun isFilterSkipped(member: Member): Boolean =
         getRow(member)?.filterSkippedAt != null
 
