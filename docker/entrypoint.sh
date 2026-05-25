@@ -43,6 +43,19 @@ log "running as $(id -un) (uid=$(id -u))"
 mkdir -p "$SIGNAL_DATA"
 
 # ---------------------------------------------------------------------------
+# Optionally overwrite $CONFIG from SIGNALBOT_CONFIG_B64 (base64-encoded YAML).
+# Set this in the Railway dashboard to recover from a broken volume config
+# without needing SSH or a volume file browser. The env var always wins so
+# you can fix a crash-loop from the dashboard alone.
+# Clear it after the first successful deploy once the volume file is correct.
+# ---------------------------------------------------------------------------
+if [ -n "${SIGNALBOT_CONFIG_B64:-}" ]; then
+  log "SIGNALBOT_CONFIG_B64 is set; writing config to $CONFIG"
+  printf '%s' "$SIGNALBOT_CONFIG_B64" | base64 -d > "$CONFIG"
+  log "config written (${#SIGNALBOT_CONFIG_B64} chars base64)"
+fi
+
+# ---------------------------------------------------------------------------
 # Seed /data/config.yaml from the bundled example on first boot. The UI
 # command exits immediately if the config file is missing, which would
 # crash-loop the container before the operator can railway-shell in to

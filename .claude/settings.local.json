@@ -6,7 +6,8 @@
       "Bash(rtk grep *)",
       "Bash(rtk read *)",
       "Bash(railway --version)",
-      "Bash(railway status *)"
+      "Bash(railway status *)",
+      "Bash(base64 *)"
     ]
   }
 }
