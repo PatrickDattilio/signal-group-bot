@@ -23,14 +23,14 @@ RUN ./gradlew --no-daemon shadowJar
 # with the Kotlin runtime below when bumping signal-cli.
 FROM eclipse-temurin:25-jdk AS signal-cli
 WORKDIR /src
-ARG SIGNAL_CLI_VERSION=0.14.3
+ARG SIGNAL_CLI_VERSION=0.14.7
 ENV GRADLE_OPTS="-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m"
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 COPY docker/signal-cli-patches/ /patches/
 RUN git clone --depth 1 --branch "v${SIGNAL_CLI_VERSION}" \
         https://github.com/AsamK/signal-cli.git . \
-    && git apply /patches/*.patch \
+    && (if ls /patches/*.patch 1>/dev/null 2>&1; then git apply /patches/*.patch; fi) \
     && chmod +x ./gradlew \
     && ./gradlew --no-daemon installDist \
     && /src/build/install/signal-cli/bin/signal-cli --version

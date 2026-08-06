@@ -311,7 +311,7 @@ Railway auto-injects `PORT`. The Dockerfile's `CMD` honors it.
 The Dockerfile pins:
 
 ```
-ARG SIGNAL_CLI_VERSION=0.14.3
+ARG SIGNAL_CLI_VERSION=0.14.7
 FROM eclipse-temurin:25-jre
 ```
 

@@ -115,8 +115,8 @@ suspend fun runBot(
                     }
                 }
 
-                if (!resendAfterCooldown && store.hasBeenVetted(member)) {
-                    logger.debug { "Skipping member (resend disabled, already vetted): ${member.toAddressMap()}" }
+                if (store.hasCompletedVetting(member, followUpTemplate != null)) {
+                    logger.debug { "Skipping member (vetting completed): ${member.toAddressMap()}" }
                     continue
                 }
 

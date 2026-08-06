@@ -25,6 +25,14 @@ class MessagedStore {
         return row.vettingSentAt != null || row.vettingFollowupSentAt != null
     }
 
+    /** Returns true if the member has received all configured vetting DMs (intro, plus follow-up if configured). */
+    fun hasCompletedVetting(member: Member, followUpTemplateExists: Boolean): Boolean {
+        val row = getRow(member) ?: return false
+        if (row.vettingSentAt == null) return false
+        if (followUpTemplateExists && row.vettingFollowupSentAt == null) return false
+        return true
+    }
+
     fun isFilterSkipped(member: Member): Boolean =
         getRow(member)?.filterSkippedAt != null
 

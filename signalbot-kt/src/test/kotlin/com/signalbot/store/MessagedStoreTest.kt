@@ -115,6 +115,26 @@ class MessagedStoreTest {
         assertEquals("{}", Member().key())
     }
 
+    @Test
+    fun `hasCompletedVetting behavior with and without followup template`() {
+        val store = MessagedStore()
+        val member = Member(uuid = "test-completed-vetting")
+
+        // 1. New member -> not completed
+        assertFalse(store.hasCompletedVetting(member, followUpTemplateExists = false))
+        assertFalse(store.hasCompletedVetting(member, followUpTemplateExists = true))
+
+        // 2. Intro sent -> completed if no followup template, incomplete if followup template exists
+        store.markVettingSent(member)
+        assertTrue(store.hasCompletedVetting(member, followUpTemplateExists = false))
+        assertFalse(store.hasCompletedVetting(member, followUpTemplateExists = true))
+
+        // 3. Followup sent -> completed regardless of template setting
+        store.markVettingFollowupSent(member)
+        assertTrue(store.hasCompletedVetting(member, followUpTemplateExists = false))
+        assertTrue(store.hasCompletedVetting(member, followUpTemplateExists = true))
+    }
+
     private fun lastTouchWithinCooldown(store: MessagedStore, member: Member, cooldownSeconds: Int): Boolean {
         if (cooldownSeconds <= 0) return store.getMessagedAt(member) != null
         val ts = store.getMessagedAt(member) ?: return false

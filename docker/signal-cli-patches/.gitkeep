@@ -1,0 +1,2 @@
+# Directory for optional signal-cli patches.
+# Upstream signal-cli v0.14.7 now natively includes storing profile keys for requesting members.
