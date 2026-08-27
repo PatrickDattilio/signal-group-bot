@@ -42,6 +42,7 @@ class MassDmStore {
         delayMs: Long = 500L,
     ): MassDmJob {
         val id = UUID.randomUUID().toString()
+        evictOldJobsIfNecessary()
         val job = MassDmJob(
             id = id,
             groupId = groupId,
@@ -74,6 +75,18 @@ class MassDmStore {
     }
 
     fun getJob(id: String): MassDmJob? = jobs[id]
+
+    private fun evictOldJobsIfNecessary() {
+        if (jobs.size > 50) {
+            val oldestCompleted = jobs.values
+                .filter { it.status == "completed" }
+                .sortedBy { it.completedAt ?: it.startedAt }
+            val toRemove = oldestCompleted.take(jobs.size - 40)
+            for (j in toRemove) {
+                jobs.remove(j.id)
+            }
+        }
+    }
 
     private fun persistJob(job: MassDmJob) {
         try {

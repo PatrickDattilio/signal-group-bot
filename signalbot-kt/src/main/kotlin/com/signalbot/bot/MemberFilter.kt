@@ -67,9 +67,20 @@ class RateLimiter(
 
     data class Result(val allowed: Boolean, val reason: String)
 
+    fun cleanupStaleEntries(currentTimeSec: Double = System.currentTimeMillis() / 1000.0) {
+        val cutoff = currentTimeSec - windowSeconds
+        requests.entries.removeIf { entry ->
+            synchronized(entry.value) {
+                entry.value.removeAll { it <= cutoff }
+                entry.value.isEmpty()
+            }
+        }
+    }
+
     fun check(member: Member, currentTimeSec: Double = System.currentTimeMillis() / 1000.0): Result {
         val key = member.rateLimiterIdentity()
         if (key.isBlank()) return Result(true, "No identifier")
+        cleanupStaleEntries(currentTimeSec)
         val list = requests.computeIfAbsent(key) { mutableListOf() }
         synchronized(list) {
             val cutoff = currentTimeSec - windowSeconds

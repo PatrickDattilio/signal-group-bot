@@ -97,7 +97,8 @@ ENV SIGNALBOT_CONFIG=/data/config.yaml \
     SIGNAL_CLI_TCP=127.0.0.1:7583 \
     SIGNALBOT_LOG_LEVEL=INFO \
     SIGNALBOT_SIGNAL_LOG_LEVEL=INFO \
-    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75"
+    SIGNAL_CLI_JAVA_OPTS="-Xmx256m -Xms64m -XX:+UseG1GC" \
+    SIGNALBOT_JAVA_OPTS="-Xmx192m -Xms64m -XX:+UseG1GC"
 # Optional (set in Railway Variables):
 #   SIGNALBOT_SIGNAL_LOG_LEVEL=DEBUG  — DEBUG logs for com.signalbot.signal (incl. JSON-RPC raw at DEBUG unless SIGNALBOT_LOG_RPC_RAW is set)
 #   SIGNALBOT_LOG_RPC_RAW=1         — log full send/sendMessage JSON-RPC response line at INFO (no need for DEBUG)

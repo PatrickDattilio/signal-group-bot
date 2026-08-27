@@ -33,12 +33,24 @@ object Auth {
 
     fun isLoginRateLimited(ip: String): Boolean {
         val now = System.currentTimeMillis() / 1000.0
+        cleanupStaleEntries(now)
         val unlockAt = locks[ip] ?: 0.0
         if (unlockAt > now) return true
         if (unlockAt > 0.0) locks.remove(ip)
         val recent = (attempts[ip] ?: mutableListOf()).filter { (now - it) <= loginWindowSeconds }.toMutableList()
         attempts[ip] = recent
         return false
+    }
+
+    private fun cleanupStaleEntries(now: Double) {
+        locks.entries.removeIf { it.value <= now }
+        attempts.entries.removeIf { entry ->
+            val recent = entry.value.filter { (now - it) <= loginWindowSeconds }
+            if (recent.isEmpty()) true else {
+                attempts[entry.key] = recent.toMutableList()
+                false
+            }
+        }
     }
 
     fun recordLoginFailure(ip: String) {

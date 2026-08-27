@@ -136,9 +136,9 @@ if [ -z "$ACCOUNT" ]; then
   log "until then, any call that needs Signal will fail."
 else
   log "linked account: $ACCOUNT"
-  log "starting signal-cli daemon on $TCP"
-
-  signal-cli --config "$SIGNAL_DATA" -a "$ACCOUNT" daemon --tcp "$TCP" &
+  SIGNAL_CLI_OPTS="${SIGNAL_CLI_JAVA_OPTS:--Xmx256m -Xms64m -XX:+UseG1GC}"
+  log "starting signal-cli daemon on $TCP (JVM opts: $SIGNAL_CLI_OPTS)"
+  JAVA_TOOL_OPTIONS="$SIGNAL_CLI_OPTS" signal-cli --config "$SIGNAL_DATA" -a "$ACCOUNT" daemon --tcp "$TCP" &
   DAEMON_PID=$!
 
   # Wait up to ~60s for the port to accept connections.
@@ -180,14 +180,15 @@ export SIGNAL_CLI_SOCKET="$TCP"
 export SIGNALBOT_UI_PORT="$PORT"
 MODE="${SIGNALBOT_MODE:-ui}"
 export SIGNALBOT_UI_HOST="${SIGNALBOT_UI_HOST:-0.0.0.0}"
+export JAVA_TOOL_OPTIONS="${SIGNALBOT_JAVA_OPTS:--Xmx192m -Xms64m -XX:+UseG1GC}"
 
 case "$MODE" in
   run)
-    log "launching SignalBot (mode=run: UI + polling bot) on ${SIGNALBOT_UI_HOST}:$PORT"
+    log "launching SignalBot (mode=run: UI + polling bot) on ${SIGNALBOT_UI_HOST}:$PORT (JVM opts: $JAVA_TOOL_OPTIONS)"
     exec java -jar /app/signalbot.jar run
     ;;
   ui|*)
-    log "launching SignalBot (mode=ui: admin UI only) on 0.0.0.0:$PORT"
+    log "launching SignalBot (mode=ui: admin UI only) on 0.0.0.0:$PORT (JVM opts: $JAVA_TOOL_OPTIONS)"
     exec java -jar /app/signalbot.jar ui --host 0.0.0.0 --port "$PORT"
     ;;
 esac
